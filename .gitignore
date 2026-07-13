@@ -1,0 +1,29 @@
+# Database — contains real investment data, never commit this
+investments.db
+*.db
+
+# Uploaded documents folder
+documents/
+
+# Excel files — may contain personal/financial data
+*.xlsx
+*.xls
+
+# Test scripts with personal file paths
+test_parse.py
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
