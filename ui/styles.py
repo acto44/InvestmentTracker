@@ -354,22 +354,32 @@ QMenu::separator {{ height: 1px; background: {BORDER_SOFT}; margin: 6px 8px; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QScrollArea QWidget#qt_scrollarea_viewport {{ background: transparent; }}
-/* ── Scrollbars: slim, neutral, barely-there ── */
+/* ── Scrollbars: slim but clearly VISIBLE and draggable ── */
 QScrollBar:vertical {{
-    border: none; background: transparent; width: 8px; margin: 4px;
+    border: none;
+    background: rgba(255,255,255,0.05);
+    width: 12px;
+    margin: 2px;
+    border-radius: 6px;
 }}
 QScrollBar::handle:vertical {{
-    background: rgba(148,163,184,0.22); border-radius: 4px; min-height: 28px;
+    background: rgba(148,163,184,0.45); border-radius: 5px; min-height: 32px;
 }}
-QScrollBar::handle:vertical:hover {{ background: rgba(148,163,184,0.40); }}
+QScrollBar::handle:vertical:hover   {{ background: rgba(148,163,184,0.65); }}
+QScrollBar::handle:vertical:pressed {{ background: {ACCENT}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar:horizontal {{
-    border: none; background: transparent; height: 8px; margin: 4px;
+    border: none;
+    background: rgba(255,255,255,0.05);
+    height: 12px;
+    margin: 2px;
+    border-radius: 6px;
 }}
 QScrollBar::handle:horizontal {{
-    background: rgba(148,163,184,0.22); border-radius: 4px; min-width: 28px;
+    background: rgba(148,163,184,0.45); border-radius: 5px; min-width: 32px;
 }}
-QScrollBar::handle:horizontal:hover {{ background: rgba(148,163,184,0.40); }}
+QScrollBar::handle:horizontal:hover   {{ background: rgba(148,163,184,0.65); }}
+QScrollBar::handle:horizontal:pressed {{ background: {ACCENT}; }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 /* ── Splitter ── */
