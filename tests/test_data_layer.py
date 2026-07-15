@@ -48,11 +48,11 @@ def test_migration_backfills_and_backs_up(v1_db):
     conn.close()
     assert 'current_valuation' not in cols
 
-    # every migration step is in the audit log (v1→v2 and v2→v3)
+    # every migration step is in the audit log (one entry per version)
     entries = models.get_audit_log()
     migs = [e for e in entries if e['action'] == 'migration']
     versions = {m['changes'][0]['new'] for m in migs}
-    assert versions == {'2', '3'}
+    assert versions == {str(v) for v, _ in models.MIGRATIONS}
 
 
 def test_migration_skips_backup_on_empty_db(temp_db):

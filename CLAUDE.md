@@ -19,7 +19,9 @@ backups.py               SQLite backup-API copies: pre-migration (kept
 metrics.py               financial math: ROI, MOIC/DPI/RVPI/TVPI, date-true
                          XIRR (Newton + bracket-scan bisection,
                          actual/365.25), signed_amount() sign convention,
-                         footnote strings; keeps its own self-test
+                         pure time series (position_value_at, nav_series,
+                         quarter helpers, nav_quarter_delta), footnote
+                         strings; keeps its own self-test
 excel_io.py              Excel import/export (openpyxl)
 seed_demo_data.py        seed(verbose=True): fictional "ViFi" demo
                          portfolio (10 companies, 2 entities) — the ONLY
@@ -96,6 +98,23 @@ pytest.ini               testpaths=tests — root-level scratch scripts
   whose status is Exited or Bankrupt are CLOSED: unrealized value is 0 by
   definition and only realized proceeds count (the valuation history
   keeps the record).
+- **TIME SERIES ARE DERIVED, NOT STORED**: periodic NAV/snapshot values
+  are computed on demand from the dated valuations and cashflows via the
+  pure series functions in metrics.py. Reasoning: dated source data plus
+  deterministic functions cannot go stale; stored snapshot copies can and
+  do. Reports take an as-of parameter instead of reading frozen rows.
+  Rules the series follow (all tested):
+  - stepwise: a valuation applies from its as_of_date (inclusive) until
+    the next one
+  - same-day ordering: when a valuation and a flow share a date, the flow
+    counts in the cumulative sums AND the valuation sets the NAV
+  - closed positions contribute 0 from the date of their last exit-type
+    flow (inclusive — the proceeds replace the position, no double
+    count); write-offs with no exit flow contribute 0 after their last
+    recorded activity
+  - before the first valuation a position is shown at net invested
+    capital with is_estimate=True — every consumer must surface that flag
+    (dashed line, marker, or "contains estimates" note)
 - **UI**: keep the dark design system in ui/styles.py and existing
   interaction patterns. Professional ≠ redesign.
 - **PYINSTALLER RESOURCES**: any data file bundled into the .exe
@@ -132,6 +151,10 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
    (tests/test_repo_hygiene.py proves the tracked state).
 4. Session Log below updated.
 
+## Future ideas (parked deliberately)
+- "View the whole dashboard as of an arbitrary past date" — the derived
+  series make it possible; out of scope until someone actually needs it.
+
 ## Dependency register
 | name       | runtime/dev | justification                          | session |
 |------------|-------------|----------------------------------------|---------|
@@ -147,3 +170,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | 2026-07-14 | 1 | CLAUDE.md constitution; repo hygiene guard test; pytest foundation (temp_db/demo_db fixtures, metrics under pytest, UI smoke via pytest-qt offscreen); models.set_db_path() override; seed_demo_data wrapped in seed() (script behavior unchanged); .gitignore extended (backups/, reports/, *.sqlite*) | none |
 | 2026-07-14 | 2 | Trustworthy data layer: backups.py (pre-migration via SQLite backup API + 24h routine, keep-10 rotation); valuation history replaces companies.current_valuation (honest legacy_migration backfill, column dropped, get_current_valuation + enriched company dicts keep all readers working); append-only audit trail written in-transaction by every mutator, with origins (ui.*, excel_import); round↔valuation link + ask-on-delete; Valuation block in Overview; read-only History view (toolbar + per company); metrics UNREALIZED_VALUE_FOOTNOTE | v2: valuations, audit_log, DROP companies.current_valuation |
 | 2026-07-14 | 3 | Cash-flow ledger: cashflows table (backfilled 1 investment flow per round), round↔flow write-through in the same transaction, signed_amount() sign convention, DPI/RVPI/TVPI + realized/unrealized split, date-true XIRR with terminal-value assumption + bracket-scan bisection for multi-sign-change cases, closed-position rule (Exited/Bankrupt ⇒ unrealized 0), shares_held + oversell guard + ownership scaling after partial sales, ledger UI in Rounds & Cash flows tab, CashflowDialog, exit-status offer, dashboard Realized + MOIC/TVPI cards, Excel Cashflows sheet + explicit no-flow-import notes, demo data gains dividends/partial sale/full exit. Incident note: the seeder was accidentally run against the repo-root db (which holds demo data; the real family db in dist/ was never touched) — the session-2 pre-migration backup restored it, and seed_demo_data now refuses a populated default-path db without --yes | v3: cashflows |
+| 2026-07-14 | 4 | Time axis: pure derived series in metrics.py (position_value_at with net-invested estimate fallback + is_estimate flag, invested/realized_to_date, month_end_grid, nav_series, quarter helpers, nav_quarter_delta) — derived-not-stored decision + same-day/closed-zero rules recorded as invariant; dashboard Portfolio-over-time chart (NAV/invested/realized steps, 1Y/3Y/All, estimate markers) + quarter-delta KPI; company position-value chart with ▲/▼ flow markers, hover tooltips, dashed estimate segments; company_updates journal (v4) with audited CRUD, Journal tab, demo entries | v4: company_updates |

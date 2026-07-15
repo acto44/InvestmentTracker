@@ -300,6 +300,23 @@ class DashboardTab(QWidget):
 
         # ── 3. Charts ─────────────────────────────────────────────────────────
         if HAS_MPL:
+            self._layout.addWidget(_SectionTitle("Portfolio Over Time"))
+            self._add_quarter_delta(sym)
+            range_row = QHBoxLayout()
+            for label in ('1Y', '3Y', 'All'):
+                b = QPushButton(label)
+                b.setFixedWidth(44)
+                active = getattr(self, '_ts_range', 'All') == label
+                b.setStyleSheet(
+                    f"QPushButton {{ background:{ACCENT if active else CARD}; "
+                    f"color:{'white' if active else MUTED}; border:1px solid "
+                    f"{BORDER}; border-radius:6px; padding:3px; }}")
+                b.clicked.connect(lambda _, l=label: self._set_ts_range(l))
+                range_row.addWidget(b)
+            range_row.addStretch()
+            self._layout.addLayout(range_row)
+            self._layout.addWidget(self._timeline_chart(sym))
+
             chart_row = QHBoxLayout()
             chart_row.setSpacing(12)
             chart_row.addWidget(self._top_holdings_chart(companies, co_met, sym), 3)
@@ -369,6 +386,81 @@ class DashboardTab(QWidget):
         self._layout.addStretch()
 
     # ── Charts ────────────────────────────────────────────────────────────────
+
+    def _set_ts_range(self, label):
+        self._ts_range = label
+        self.refresh()
+
+    def _add_quarter_delta(self, sym):
+        """Small KPI: NAV now vs previous quarter-end (metrics does the
+        math so a test can hand-check it)."""
+        data = models.timeseries_inputs(entity=self._entity_filter or None)
+        qd = m.nav_quarter_delta(data)
+        if not qd:
+            return
+        color = GREEN if qd['delta'] >= 0 else RED
+        sign = '+' if qd['delta'] >= 0 else '−'
+        pct = f" ({qd['pct']:+.1f}%)" if qd['pct'] is not None else ''
+        est = '  ·  contains estimated positions' if qd['is_estimate'] else ''
+        lbl = QLabel(
+            f"NAV {sym} {qd['current']:,.0f}  vs  {qd['previous_quarter']} "
+            f"end {sym} {qd['previous']:,.0f}   →   "
+            f"<span style='color:{color};'>{sign}{sym} "
+            f"{abs(qd['delta']):,.0f}{pct}</span>"
+            f"<span style='color:{MUTED};'>{est}</span>")
+        lbl.setStyleSheet("font-size:10pt;")
+        self._layout.addWidget(lbl)
+
+    def _timeline_chart(self, sym):
+        """NAV / cumulative invested / cumulative realized over month-end
+        grid — DERIVED from dated valuations and flows (see CLAUDE.md)."""
+        from datetime import date as _date, timedelta as _td
+        data = models.timeseries_inputs(entity=self._entity_filter or None)
+        first = m.first_flow_date(data)
+        today = _date.today()
+        if first is None:
+            lbl = QLabel("No dated cash flows yet — the timeline appears "
+                         "after the first investment is recorded.")
+            lbl.setStyleSheet(f"color:{MUTED};")
+            return lbl
+        rng = getattr(self, '_ts_range', 'All')
+        if rng == '1Y':
+            first = max(first, today - _td(days=365))
+        elif rng == '3Y':
+            first = max(first, today - _td(days=3 * 365))
+        grid = m.month_end_grid(first, today)
+        series = m.nav_series(data, grid)
+
+        xs = [p['date'] for p in series]
+        fig = Figure(figsize=(9.0, 3.4), facecolor=CARD)
+        ax = fig.add_subplot(111)
+        _style_axes(ax)
+        ax.step(xs, [p['nav'] for p in series], where='post',
+                color=ACCENT, linewidth=2, label='NAV')
+        ax.step(xs, [p['invested_cum'] for p in series], where='post',
+                color=MUTED, linewidth=1.4, linestyle='--',
+                label='Invested (cum.)')
+        ax.step(xs, [p['realized_cum'] for p in series], where='post',
+                color=GREEN, linewidth=1.4, label='Realized (cum.)')
+        est_pts = [p for p in series if p['is_estimate']]
+        if est_pts:
+            ax.plot([p['date'] for p in est_pts],
+                    [p['nav'] for p in est_pts], 'o', color=MUTED,
+                    markersize=3,
+                    label='contains estimates')
+        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(
+            lambda v, _: f"{int(v/1000)}K" if abs(v) >= 1000 else str(int(v))))
+        ax.tick_params(axis='both', labelsize=8)
+        ax.legend(fontsize=8, frameon=False, loc='upper left',
+                  labelcolor=MUTED)
+        ax.set_title(f'NAV, invested and realized over time ({sym})',
+                     fontsize=10, fontweight='bold', pad=6)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        fig.tight_layout(pad=1.2)
+        canvas = FigureCanvasQTAgg(fig)
+        canvas.setMinimumHeight(260)
+        return canvas
 
     def _top_holdings_chart(self, companies, co_met, sym):
         """Horizontal bar — top 12 holdings by invested amount."""

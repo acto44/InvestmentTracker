@@ -197,7 +197,25 @@ def _migrate_v3(conn):
              r['amount_invested'], 'backfilled from funding round', now))
 
 
-MIGRATIONS = [(2, _migrate_v2), (3, _migrate_v3)]
+def _migrate_v4(conn):
+    """Company journal: short dated 'how it's going' notes (ideally
+    quarterly). Reports print the latest entries."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS company_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            date TEXT NOT NULL,
+            period_label TEXT,
+            title TEXT,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_updates_company_date
+            ON company_updates(company_id, date);
+    """)
+
+
+MIGRATIONS = [(2, _migrate_v2), (3, _migrate_v3), (4, _migrate_v4)]
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
 
 
@@ -928,6 +946,118 @@ def delete_cashflow(cashflow_id, origin='app'):
         conn.close()
         raise
     conn.close()
+
+
+# ── Company journal (dated qualitative updates) ───────────────────────────────
+
+def get_company_updates(company_id):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM company_updates WHERE company_id=? "
+        "ORDER BY date DESC, id DESC", (company_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_company_update(company_id, date, text, period_label=None,
+                       title=None, origin='app'):
+    if not (text or '').strip():
+        raise ValueError('a journal entry needs text')
+    conn = get_conn()
+    try:
+        c = conn.execute(
+            "INSERT INTO company_updates (company_id, date, period_label, "
+            "title, text, created_at) VALUES (?,?,?,?,?,?)",
+            (company_id, date, period_label, title, text.strip(),
+             _utcnow()))
+        uid = c.lastrowid
+        _audit(conn, 'company_updates', uid, 'insert',
+               _diff({}, {'date': date, 'period_label': period_label,
+                          'title': title, 'text': text.strip()}),
+               origin, company_id=company_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+    return uid
+
+
+def update_company_update(update_id, origin='app', **kwargs):
+    if not kwargs:
+        return
+    conn = get_conn()
+    try:
+        old = conn.execute("SELECT * FROM company_updates WHERE id=?",
+                           (update_id,)).fetchone()
+        if not old:
+            conn.close()
+            return
+        old = dict(old)
+        fields = ', '.join(f"{k}=?" for k in kwargs)
+        conn.execute(f"UPDATE company_updates SET {fields} WHERE id=?",
+                     [*kwargs.values(), update_id])
+        changes = _diff(old, kwargs)
+        if changes:
+            _audit(conn, 'company_updates', update_id, 'update', changes,
+                   origin, company_id=old['company_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+
+
+def delete_company_update(update_id, origin='app'):
+    conn = get_conn()
+    try:
+        old = conn.execute("SELECT * FROM company_updates WHERE id=?",
+                           (update_id,)).fetchone()
+        if not old:
+            conn.close()
+            return
+        old = dict(old)
+        conn.execute("DELETE FROM company_updates WHERE id=?", (update_id,))
+        _audit(conn, 'company_updates', update_id, 'delete',
+               [{'field': k, 'old': _trunc(v), 'new': None}
+                for k, v in old.items()
+                if k not in ('id', 'company_id') and v not in (None, '')],
+               origin, company_id=old['company_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+
+
+def get_valuations_by_company() -> dict:
+    """{company_id: [valuation, ...]} in one query — for time series."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM valuations ORDER BY as_of_date, id").fetchall()
+    conn.close()
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r['company_id'], []).append(dict(r))
+    return out
+
+
+def timeseries_inputs(entity=None, company_id=None) -> list:
+    """[(company, rounds, valuations, cashflows), ...] — the shape
+    metrics.nav_series consumes. Scope: everything, one entity, or one
+    company."""
+    companies = get_all_companies()
+    if entity:
+        companies = [c for c in companies if (c.get('entity') or '') == entity]
+    if company_id:
+        companies = [c for c in companies if c['id'] == company_id]
+    flows_by = get_cashflows_by_company()
+    vals_by = get_valuations_by_company()
+    return [(c, get_rounds(c['id']), vals_by.get(c['id'], []),
+             flows_by.get(c['id'], [])) for c in companies]
 
 
 # ── Documents ─────────────────────────────────────────────────────────────────

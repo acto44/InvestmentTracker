@@ -276,11 +276,15 @@ class DetailPanel(QWidget):
         ov_page, ov = _page()
         rd_page, rd = _page()
         dc_page, dc = _page()
+        jr_page, jr = _page()
 
         n_docs = len(models.get_documents(company_id=cid))
+        updates = models.get_company_updates(cid)
         tabs.addTab(ov_page, "Overview")
         tabs.addTab(rd_page, f"Rounds & Cash flows ({len(rounds)})")
         tabs.addTab(dc_page, f"Documents ({n_docs})")
+        tabs.addTab(jr_page, f"Journal ({len(updates)})")
+        self._add_journal(jr, cid, updates)
 
         # Description block
         description = (c.get('description') or '').strip()
@@ -690,6 +694,203 @@ class DetailPanel(QWidget):
             models.update_company(cid, notes=notes.strip(),
                                   origin='ui.cashflow_dialog')
 
+    # ── Valuation-over-time chart ─────────────────────────────────────────────
+
+    def _valuation_chart(self, cid, sym):
+        """Position value over time with flow markers (▲ in / ▼ out) and
+        hover tooltips; estimate segments are dashed (FOOTNOTE_ESTIMATE)."""
+        try:
+            import matplotlib
+            import matplotlib.ticker
+            matplotlib.use('QtAgg')
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+            from matplotlib.figure import Figure
+        except Exception:
+            return None
+        from datetime import date as _date
+        from ui.dashboard import _style_axes
+
+        data = models.timeseries_inputs(company_id=cid)
+        if not data:
+            return None
+        company, rounds, valuations, flows = data[0]
+        first = m.first_flow_date(data)
+        if first is None:
+            return None
+        grid = m.month_end_grid(first, _date.today())
+        series = m.nav_series(data, grid)
+
+        fig = Figure(figsize=(7.5, 2.8), facecolor=CARD)
+        ax = fig.add_subplot(111)
+        _style_axes(ax)
+
+        # split into estimate / confirmed segments so estimates are dashed
+        seg_x, seg_y, seg_est = [], [], None
+        for p in series + [None]:
+            cur_est = p['is_estimate'] if p else None
+            if seg_est is None:
+                seg_est = cur_est
+            if p is None or cur_est != seg_est:
+                if seg_x:
+                    ax.step(seg_x, seg_y, where='post',
+                            color=MUTED if seg_est else ACCENT,
+                            linestyle='--' if seg_est else '-',
+                            linewidth=1.6,
+                            label=('estimated (no valuation yet)'
+                                   if seg_est else 'position value'))
+                if p is not None:
+                    seg_x, seg_y = [seg_x[-1]] if seg_x else [], \
+                                   [seg_y[-1]] if seg_y else []
+                    seg_est = cur_est
+            if p is not None:
+                seg_x.append(p['date'])
+                seg_y.append(p['nav'])
+
+        # flow markers at their dates, on the value line
+        artists = []
+        for f in flows:
+            fd = m._parse_date(f.get('date'))
+            if not fd:
+                continue
+            pv = m.position_value_at(company, rounds, valuations, flows, fd)
+            signed = m.signed_amount(f['type'], f['amount'])
+            marker = '^' if signed >= 0 else 'v'
+            color = GREEN if signed >= 0 else RED
+            art = ax.plot([fd], [pv['value']], marker, color=color,
+                          markersize=7, zorder=5)[0]
+            label = (f"{f['date']}  {f['type'].replace('_', ' ')}  "
+                     f"{'+' if signed >= 0 else '−'}{sym} "
+                     f"{abs(signed):,.0f}")
+            if f.get('note'):
+                label += f"\n{f['note']}"
+            artists.append((art, label))
+
+        annot = ax.annotate(
+            '', xy=(0, 0), xytext=(12, 12), textcoords='offset points',
+            bbox={'boxstyle': 'round', 'fc': CARD_ALT, 'ec': BORDER},
+            color=TEXT, fontsize=8, zorder=10)
+        annot.set_visible(False)
+
+        def _on_move(event):
+            if event.inaxes != ax:
+                return
+            for art, label in artists:
+                hit, _ = art.contains(event)
+                if hit:
+                    annot.xy = (art.get_xdata()[0], art.get_ydata()[0])
+                    annot.set_text(label)
+                    annot.set_visible(True)
+                    fig.canvas.draw_idle()
+                    return
+            if annot.get_visible():
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+
+        # dedupe legend labels
+        handles, labels = ax.get_legend_handles_labels()
+        seen = {}
+        for h, l in zip(handles, labels):
+            seen.setdefault(l, h)
+        ax.legend(seen.values(), seen.keys(), fontsize=8, frameon=False,
+                  labelcolor=MUTED, loc='upper left')
+        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(
+            lambda v, _: f"{int(v/1000)}K" if abs(v) >= 1000 else str(int(v))))
+        ax.tick_params(axis='both', labelsize=8)
+        ax.set_title(f'Position value over time ({sym})  ·  ▲ money in  '
+                     '▼ money out', fontsize=9, fontweight='bold', pad=6)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        fig.tight_layout(pad=1.0)
+
+        canvas = FigureCanvasQTAgg(fig)
+        canvas.setMinimumHeight(230)
+        canvas.mpl_connect('motion_notify_event', _on_move)
+        return canvas
+
+    # ── Journal ───────────────────────────────────────────────────────────────
+
+    def _add_journal(self, jr, cid, updates):
+        intro = QLabel("Short dated notes on how the company is going — "
+                       "ideally one per quarter. Reports print the latest "
+                       "entries.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color:{MUTED}; font-size:9pt;")
+        jr.addWidget(intro)
+
+        for u in updates:
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background:{CARD}; border:1px solid {BORDER}; "
+                f"border-radius:8px; }}")
+            lay = QVBoxLayout(card)
+            lay.setContentsMargins(12, 8, 12, 8)
+            head_row = QHBoxLayout()
+            head = QLabel(
+                f"<b>{u['date']}</b>"
+                + (f"  ·  {u['period_label']}" if u.get('period_label') else '')
+                + (f"  ·  {u['title']}" if u.get('title') else ''))
+            head.setStyleSheet("border:none;")
+            head_row.addWidget(head)
+            head_row.addStretch()
+            for txt, slot in [("Edit", lambda _, uid=u['id']:
+                               self._edit_update(cid, uid)),
+                              ("Delete", lambda _, uid=u['id']:
+                               self._delete_update(cid, uid))]:
+                b = QPushButton(txt)
+                b.setStyleSheet(_SOFT_BTN_QSS)
+                b.clicked.connect(slot)
+                head_row.addWidget(b)
+            lay.addLayout(head_row)
+            body = QLabel(u['text'])
+            body.setWordWrap(True)
+            body.setStyleSheet(f"border:none; color:{TEXT}; font-size:9.5pt;")
+            lay.addWidget(body)
+            jr.addWidget(card)
+
+        if not updates:
+            empty = QLabel("No journal entries yet.")
+            empty.setStyleSheet(f"color:{MUTED};")
+            jr.addWidget(empty)
+
+        add_btn = QPushButton("＋ Add journal entry")
+        add_btn.setStyleSheet(_SOFT_BTN_QSS)
+        add_btn.clicked.connect(lambda: self._add_update(cid))
+        jr.addWidget(add_btn)
+        jr.addStretch()
+
+    def _add_update(self, cid):
+        from ui.dialogs import JournalDialog
+        dlg = JournalDialog(self)
+        if dlg.exec():
+            d = dlg.get_data()
+            models.add_company_update(cid, d['date'], d['text'],
+                                      period_label=d['period_label'],
+                                      title=d['title'], origin='ui.journal')
+            self.show_company(cid)
+
+    def _edit_update(self, cid, uid):
+        from ui.dialogs import JournalDialog
+        u = next((x for x in models.get_company_updates(cid)
+                  if x['id'] == uid), None)
+        if not u:
+            return
+        dlg = JournalDialog(self, entry=u)
+        if dlg.exec():
+            models.update_company_update(uid, origin='ui.journal',
+                                         **dlg.get_data())
+            self.show_company(cid)
+
+    def _delete_update(self, cid, uid):
+        if QMessageBox.question(
+                self, "Delete journal entry",
+                "Delete this entry? The change is recorded in the "
+                "history log.",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            models.delete_company_update(uid, origin='ui.journal')
+            self.show_company(cid)
+
     # ── Rounds table ──────────────────────────────────────────────────────────
 
     def _add_valuation_block(self, ov, c, met, sym):
@@ -773,6 +974,10 @@ class DetailPanel(QWidget):
             btn_row.addWidget(b)
         btn_row.addStretch()
         ov.addLayout(btn_row)
+
+        chart = self._valuation_chart(cid, sym)
+        if chart is not None:
+            ov.addWidget(chart)
 
     def _selected_valuation_id(self):
         tbl = getattr(self, '_val_table', None)

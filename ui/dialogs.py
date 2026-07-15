@@ -696,6 +696,80 @@ class CashflowDialog(QDialog):
         }
 
 
+class JournalDialog(QDialog):
+    """One dated 'how it's going' note. The period label defaults to the
+    quarter of the chosen date (metrics.quarter_label)."""
+
+    def __init__(self, parent=None, entry=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit Journal Entry" if entry
+                            else "Add Journal Entry")
+        self.setMinimumWidth(460)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self.date_edit = QDateEdit(QDate.currentDate())
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.dateChanged.connect(self._suggest_period)
+        form.addRow("Date *", self.date_edit)
+
+        self.period_edit = QLineEdit()
+        form.addRow("Period label", self.period_edit)
+
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("e.g. Strong Q2, new CFO hired")
+        form.addRow("Title", self.title_edit)
+
+        self.text_edit = QTextEdit()
+        self.text_edit.setPlaceholderText(
+            "How is the company going? A few honest sentences — revenue, "
+            "runway, wins, worries…")
+        self.text_edit.setMinimumHeight(120)
+        form.addRow("Text *", self.text_edit)
+
+        layout.addLayout(form)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self._validate)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        if entry:
+            if entry.get('date'):
+                self.date_edit.setDate(QDate.fromString(
+                    entry['date'][:10], "yyyy-MM-dd"))
+            self.period_edit.setText(entry.get('period_label') or '')
+            self.title_edit.setText(entry.get('title') or '')
+            self.text_edit.setPlainText(entry.get('text') or '')
+        else:
+            self._suggest_period()
+
+    def _suggest_period(self):
+        import metrics as _m
+        from datetime import date as _date
+        d = self.date_edit.date()
+        self.period_edit.setText(_m.quarter_label(
+            _date(d.year(), d.month(), d.day())))
+
+    def _validate(self):
+        if not self.text_edit.toPlainText().strip():
+            QMessageBox.warning(self, "Text required",
+                                "The entry needs some text.")
+            return
+        self.accept()
+
+    def get_data(self):
+        return {
+            'date': self.date_edit.date().toString("yyyy-MM-dd"),
+            'period_label': self.period_edit.text().strip() or None,
+            'title': self.title_edit.text().strip() or None,
+            'text': self.text_edit.toPlainText().strip(),
+        }
+
+
 class DocumentDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)

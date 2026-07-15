@@ -4,7 +4,7 @@ Run this file directly to execute unit tests:
     python metrics.py
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Tuple, Optional
 
 
@@ -308,6 +308,182 @@ def portfolio_metrics(companies: list, rounds_by_company: dict,
         'rvpi': rvpi,
         'tvpi': tvpi,
         'irr': irr_val,
+    }
+
+
+# ── Time series (pure — no Qt, no database access) ───────────────────────────
+# Design decision (CLAUDE.md): periodic snapshots are DERIVED from the
+# dated valuations/cashflows, never stored. Same-day ordering rule: on a
+# grid date, flows dated ≤ that day count in the cumulative sums and the
+# valuation dated ≤ that day sets the NAV; on the day of an exit flow the
+# position contributes 0 (the exit proceeds replace it — no double count).
+
+FOOTNOTE_ESTIMATE = ("Estimated: no valuation recorded yet at this date — "
+                     "shown at net invested capital instead.")
+
+
+def quarter_end(d: date) -> date:
+    q_month = ((d.month - 1) // 3) * 3 + 3
+    if q_month == 12:
+        return date(d.year, 12, 31)
+    return date(d.year, q_month + 1, 1) - timedelta(days=1)
+
+
+def quarter_label(d: date) -> str:
+    return f"{d.year}-Q{(d.month - 1) // 3 + 1}"
+
+
+def previous_quarter_end(d: date) -> date:
+    first_month_of_q = ((d.month - 1) // 3) * 3 + 1
+    first_day_of_q = date(d.year, first_month_of_q, 1)
+    return first_day_of_q - timedelta(days=1)
+
+
+def month_end_grid(first: date, last: date) -> list:
+    """Month-end dates from `first` to `last`, always including `last`."""
+    out = []
+    y, mo = first.year, first.month
+    while True:
+        if mo == 12:
+            end = date(y, 12, 31)
+        else:
+            end = date(y, mo + 1, 1) - timedelta(days=1)
+        if end >= last:
+            break
+        if end >= first:
+            out.append(end)
+        y, mo = (y + 1, 1) if mo == 12 else (y, mo + 1)
+    out.append(last)
+    return out
+
+
+def invested_to_date(cashflows: list, d: date) -> float:
+    return sum(f['amount'] for f in cashflows
+               if f['type'] in OUTFLOW_TYPES
+               and f.get('date') and _parse_date(f['date']) <= d)
+
+
+def realized_to_date(cashflows: list, d: date) -> float:
+    return sum(f['amount'] for f in cashflows
+               if f['type'] in INFLOW_TYPES
+               and f.get('date') and _parse_date(f['date']) <= d)
+
+
+def _ownership_at(rounds: list, cashflows: list, d: date):
+    """Ownership % as known on date d: latest round ≤ d with a figure,
+    scaled by partial sales up to d (same rule as company_metrics)."""
+    ownership = None
+    dated = [r for r in rounds
+             if r.get('date') and _parse_date(r['date']) <= d]
+    for r in sorted(dated, key=lambda x: x['date'], reverse=True):
+        if r.get('ownership_pct') is not None:
+            ownership = r['ownership_pct']
+            break
+    if ownership is None:
+        return None
+    shares_from_rounds = sum((r.get('shares_received') or 0) for r in dated)
+    shares_delta = sum((f.get('shares_delta') or 0) for f in cashflows
+                       if f.get('date') and _parse_date(f['date']) <= d)
+    if shares_from_rounds > 0 and shares_delta:
+        ownership *= max(0.0, (shares_from_rounds + shares_delta)
+                         / shares_from_rounds)
+    return ownership
+
+
+def position_value_at(company: dict, rounds: list, valuations: list,
+                      cashflows: list, d: date) -> dict:
+    """{'value': float, 'is_estimate': bool} — the position's value on d.
+
+    Rules (documented in CLAUDE.md):
+    - latest valuation with as_of_date ≤ d × ownership at d
+    - CLOSED companies contribute 0 from the date of their last
+      exit-type flow (inclusive) — the proceeds replace the position;
+      a closed company with no exit-type flow contributes 0 from the
+      day after its last recorded activity
+    - before the first applicable valuation: net invested capital to d,
+      flagged is_estimate=True (FOOTNOTE_ESTIMATE)
+    """
+    if is_closed(company.get('notes')):
+        exit_dates = [_parse_date(f['date']) for f in cashflows
+                      if f['type'] in ('exit_proceeds', 'partial_sale')
+                      and f.get('date')]
+        if exit_dates and d >= max(exit_dates):
+            return {'value': 0.0, 'is_estimate': False}
+        if not exit_dates:
+            activity = ([_parse_date(f['date']) for f in cashflows
+                         if f.get('date')] or
+                        [_parse_date(v['as_of_date']) for v in valuations])
+            if activity and d > max(activity):
+                return {'value': 0.0, 'is_estimate': False}
+
+    applicable = [v for v in valuations
+                  if _parse_date(v['as_of_date']) and
+                  _parse_date(v['as_of_date']) <= d]
+    if applicable:
+        latest = max(applicable,
+                     key=lambda v: (v['as_of_date'],
+                                    v.get('created_at') or '',
+                                    v.get('id') or 0))
+        own = _ownership_at(rounds, cashflows, d)
+        if own is not None:
+            return {'value': (own / 100) * latest['value'],
+                    'is_estimate': False}
+
+    net = max(0.0, invested_to_date(cashflows, d)
+              - realized_to_date(cashflows, d))
+    return {'value': net, 'is_estimate': net > 0}
+
+
+def nav_series(companies_data: list, grid: list) -> list:
+    """[(date, nav, invested_cum, realized_cum, is_estimate)] as dicts.
+
+    companies_data = [(company, rounds, valuations, cashflows), ...] —
+    the caller chooses the scope (portfolio / entity / one company) by
+    choosing the list. Stepwise between grid points.
+    """
+    out = []
+    for d in grid:
+        nav = 0.0
+        inv = 0.0
+        real = 0.0
+        est = False
+        for company, rounds, valuations, cashflows in companies_data:
+            pv = position_value_at(company, rounds, valuations, cashflows, d)
+            nav += pv['value']
+            est = est or pv['is_estimate']
+            inv += invested_to_date(cashflows, d)
+            real += realized_to_date(cashflows, d)
+        out.append({'date': d, 'nav': nav, 'invested_cum': inv,
+                    'realized_cum': real, 'is_estimate': est})
+    return out
+
+
+def first_flow_date(companies_data: list):
+    dates = [_parse_date(f['date'])
+             for _, _, _, flows in companies_data
+             for f in flows if f.get('date')]
+    return min(dates) if dates else None
+
+
+def nav_quarter_delta(companies_data: list,
+                      today: Optional[date] = None) -> Optional[dict]:
+    """Current NAV vs previous quarter-end NAV: absolute and percent.
+    None when there is no history to compare."""
+    if today is None:
+        today = date.today()
+    prev_q = previous_quarter_end(today)
+    first = first_flow_date(companies_data)
+    if first is None or prev_q < first:
+        return None
+    pts = nav_series(companies_data, [prev_q, today])
+    prev_nav, cur_nav = pts[0]['nav'], pts[1]['nav']
+    return {
+        'current': cur_nav,
+        'previous': prev_nav,
+        'previous_quarter': quarter_label(prev_q),
+        'delta': cur_nav - prev_nav,
+        'pct': ((cur_nav - prev_nav) / prev_nav * 100) if prev_nav else None,
+        'is_estimate': pts[0]['is_estimate'] or pts[1]['is_estimate'],
     }
 
 

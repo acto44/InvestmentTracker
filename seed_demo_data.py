@@ -175,6 +175,24 @@ def seed(verbose=True, force=False):
     models.add_cashflow(wintex, '2024-06-30', 'exit_proceeds', 26520,
                         note='acquisition by Nordic bank', origin='app')
 
+    # Journal entries — demo for the dated qualitative side
+    models.add_company_update(
+        nova, '2025-04-05', period_label='2025-Q1',
+        title='Strong quarter, enterprise pipeline building',
+        text='ARR grew ~20% QoQ. Two of the three LOI law firms converted '
+             'to paid pilots. Burn stable; runway ~18 months. Watching '
+             'competitor consolidation in legal AI.')
+    models.add_company_update(
+        nova, '2025-07-08', period_label='2025-Q2',
+        title='Series B conversations started',
+        text='Management opened Series B talks with two funds. Pilot '
+             'conversion strong, but sales cycle to big law remains slow.')
+    models.add_company_update(
+        datapulse, '2025-06-30', period_label='2025-Q2',
+        title='Dividend policy continues',
+        text='Second consecutive annual dividend paid. NRR holding above '
+             '130%; founder considering a strategic sale in 2026.')
+
     nordic_vc = add(
         "Nordic Growth Fund II", "Portfolio B", "Fund", "ViFi Fund",
         16_000, "2020-01-01",
