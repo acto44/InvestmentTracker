@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Investment Tracker")
         self.setMinimumSize(1100, 700)
-        self.resize(1320, 820)
+        self.resize(1500, 860)   # roomy enough for the right rail
         self._build_topbar()
         self._build_ui()
         self._ai_action = None
@@ -239,6 +239,8 @@ class MainWindow(QMainWindow):
         self.dashboard.open_company.connect(self._open_company)
         self.dashboard.view_all.connect(
             lambda: self.tabs.setCurrentIndex(2))
+        self.dashboard.show_history.connect(self._show_history)
+        self.dashboard.quick_action.connect(self._quick_action)
         self.tabs.addTab(self.dashboard, "  Dashboard  ")
 
         # Portfolio tab
@@ -286,6 +288,13 @@ class MainWindow(QMainWindow):
     def _open_company(self, cid: int):
         self.tabs.setCurrentIndex(1)
         self.tree.select_company(cid)
+
+    def _quick_action(self, key: str):
+        """Right-rail Quick Actions → the existing handlers."""
+        {'add': self._quick_add_company,
+         'import': self._import_family,
+         'report': self._report_center,
+         'compare': self._compare_companies}[key]()
 
     def _build_rail(self):
         from PyQt6.QtWidgets import QComboBox, QHBoxLayout as HB

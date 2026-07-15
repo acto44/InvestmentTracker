@@ -251,9 +251,11 @@ class _Card(QFrame):
     heights and baselines by construction."""
 
     def __init__(self, title, value, subtitle=None, value_color=None,
-                 min_w=160, tooltip=None, bar=None):
+                 min_w=140, tooltip=None, bar=None, value_pt=16,
+                 pad=None):
         super().__init__()
         from ui.styles import BORDER_SOFT, CARD_PAD, RADIUS, label_font
+        pad = CARD_PAD if pad is None else pad
         self.setStyleSheet(f"""
             QFrame {{
                 background: {CARD};
@@ -263,7 +265,7 @@ class _Card(QFrame):
         if tooltip:
             self.setToolTip(tooltip)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(CARD_PAD, 16, CARD_PAD, 16)
+        lay.setContentsMargins(pad, 16, pad, 16)
         lay.setSpacing(4)
 
         t = QLabel(str(title).upper())
@@ -274,8 +276,7 @@ class _Card(QFrame):
 
         v = QLabel(str(value))
         # size via stylesheet — the app-wide QSS font-size wins over QFont
-        # (16pt: six cards must fit beside the 230px rail at min width)
-        v.setStyleSheet(f"font-size:16pt; font-weight:600; "
+        v.setStyleSheet(f"font-size:{value_pt}pt; font-weight:600; "
                         f"color:{value_color or TEXT}; border:none;")
         lay.addWidget(v)
 
@@ -289,7 +290,10 @@ class _Card(QFrame):
 
         self.setMinimumWidth(min_w)
         self.setMinimumHeight(108)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Ignored horizontally: the row divides space evenly and cards
+        # really can shrink to min_w — long labels must not dictate the
+        # layout's minimum width (they'd push the right rail off-screen)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
 
 
 class _SectionTitle(QLabel):
@@ -367,6 +371,8 @@ class _MiniTable(QFrame):
 class DashboardTab(QWidget):
     open_company = pyqtSignal(int)     # chevron on a holding row
     view_all = pyqtSignal()            # "View all →" on Top 5 Holdings
+    show_history = pyqtSignal()        # "View all" on Recent Activity
+    quick_action = pyqtSignal(str)     # right-rail Quick Actions
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -385,13 +391,45 @@ class DashboardTab(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
+        # main column + right rail; stacks vertically when narrow
         self._content = QWidget()
-        self._layout  = QVBoxLayout(self._content)
-        self._layout.setContentsMargins(24, 20, 24, 24)
+        self._content_row = QHBoxLayout(self._content)
+        self._content_row.setContentsMargins(0, 0, 0, 0)
+        self._content_row.setSpacing(0)
+
+        main_host = QWidget()
+        self._layout = QVBoxLayout(main_host)
+        self._layout.setContentsMargins(24, 20, 16, 24)
         self._layout.setSpacing(16)
+        self._content_row.addWidget(main_host, 1)
+
+        self._rail_host = QWidget()
+        self._rail_host.setFixedWidth(300)
+        self._rail_lay = QVBoxLayout(self._rail_host)
+        self._rail_lay.setContentsMargins(0, 20, 24, 24)
+        self._rail_lay.setSpacing(16)
+        self._content_row.addWidget(self._rail_host)
+        self._stacked = False
 
         scroll.setWidget(self._content)
         outer.addWidget(scroll)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        narrow = self.width() < 1280
+        if narrow != self._stacked:
+            self._stacked = narrow
+            from PyQt6.QtWidgets import QBoxLayout
+            self._content_row.setDirection(
+                QBoxLayout.Direction.TopToBottom if narrow
+                else QBoxLayout.Direction.LeftToRight)
+            if narrow:
+                self._rail_host.setMinimumWidth(0)
+                self._rail_host.setMaximumWidth(16777215)
+                self._rail_lay.setContentsMargins(24, 0, 24, 24)
+            else:
+                self._rail_host.setFixedWidth(300)
+                self._rail_lay.setContentsMargins(0, 20, 24, 24)
 
     # ── Refresh ───────────────────────────────────────────────────────────────
 
@@ -474,28 +512,31 @@ class DashboardTab(QWidget):
 
         cards = QHBoxLayout()
         cards.setSpacing(12)
-        cards.addWidget(_Card("Total Invested", f"{sym} {total_invested:,.0f}",
+
+        def kpi(*a, **k):        # six cards beside the rail: tighter fit
+            return _Card(*a, value_pt=15, pad=14, **k)
+        cards.addWidget(kpi("Total Invested", f"{sym} {total_invested:,.0f}",
             tooltip="The total amount of money put into all companies across all funding rounds."))
-        cards.addWidget(_Card("Known Current Value", f"{sym} {total_current_known:,.0f}",
+        cards.addWidget(kpi("Known Current Value", f"{sym} {total_current_known:,.0f}",
                               f"({len(known)} companies)", None,
             tooltip="Current estimated value of all companies that have a valuation set.\n"
                     "Companies without a valuation are not counted here."))
-        cards.addWidget(_Card("Gain / Loss (known)", gain_str,
+        cards.addWidget(kpi("Gain / Loss (known)", gain_str,
                               f"{total_gain_known/invested_of_known*100:+.1f}% on known"
                               if invested_of_known else None,
                               gain_color,
             tooltip="Profit or loss on companies with known valuations.\n"
                     "= Current Value − Amount Invested\n"
                     "Green = profit, Red = loss."))
-        cards.addWidget(_Card("Realized", f"{sym} {total_realized:,.0f}",
+        cards.addWidget(kpi("Realized", f"{sym} {total_realized:,.0f}",
                               None, None,
             tooltip=m.FOOTNOTE_REALIZED + "\n"
                     "Money already back in the family's pocket — exits, "
                     "partial sales, dividends, distributions."))
-        cards.addWidget(_Card("MOIC / TVPI (known)", _moic(tvpi_known),
+        cards.addWidget(kpi("MOIC / TVPI (known)", _moic(tvpi_known),
             tooltip=m.FOOTNOTE_MOIC + "\n" + m.FOOTNOTE_TVPI + "\n"
                     "Only includes companies with a known valuation."))
-        cards.addWidget(_Card("Not yet valued",
+        cards.addWidget(kpi("Not yet valued",
                               f"{sym} {total_invested - invested_of_known:,.0f}",
                               f"{len(unknown)} companies", MUTED,
             tooltip="Capital invested in companies where no current valuation has been set.\n"
@@ -616,6 +657,9 @@ class DashboardTab(QWidget):
         search_bar.textChanged.connect(self._on_search)
         self._layout.addWidget(tbl)
         self._layout.addStretch()
+
+        # ── Right rail: activity, quick actions, alerts (phase 6) ─────────
+        self._build_rail_cards(all_cos, known, rounds_by, sym)
 
     # ── Charts ────────────────────────────────────────────────────────────────
 
@@ -789,6 +833,11 @@ class DashboardTab(QWidget):
                     transform=ax.transAxes, ha='center', color=MUTED,
                     fontsize=9)
         canvas.setMinimumHeight(250)
+        # the figure's pixel size must not dictate layout minimums —
+        # the canvas re-renders at whatever width the card gives it
+        canvas.setSizePolicy(QSizePolicy.Policy.Ignored,
+                             QSizePolicy.Policy.Preferred)
+        canvas.setMinimumWidth(320)
         lay.addWidget(canvas)
         return card
 
@@ -1363,6 +1412,11 @@ class DashboardTab(QWidget):
 
         g.setColumnStretch(0, 3)
         lay.addLayout(g)
+        # the grid's text metrics must not dictate the page's minimum
+        # width (they'd push the right rail off-screen)
+        card.setMinimumWidth(460)
+        card.setSizePolicy(QSizePolicy.Policy.Ignored,
+                           QSizePolicy.Policy.Preferred)
         return card
 
     def _sector_donut_card(self, companies, co_met):
@@ -1450,6 +1504,9 @@ class DashboardTab(QWidget):
         legend.addStretch()
         row.addLayout(legend, 1)
         lay.addLayout(row)
+        card.setMinimumWidth(280)
+        card.setSizePolicy(QSizePolicy.Policy.Ignored,
+                           QSizePolicy.Policy.Preferred)
         return card
 
     def _build_health_section(self, companies, co_met, rounds_by, sym):
@@ -1530,43 +1587,182 @@ class DashboardTab(QWidget):
                     "Lower = gains are spread across more companies, a healthier sign."))
         lay.addLayout(badge_row)
 
-        details_row = QHBoxLayout()
-        details_row.setSpacing(16)
-        # (the Top 5 holdings table moved to its own extended card in
-        # phase 5; the stale list moves to the right rail in phase 6)
+        # (top-5 table and the stale list both moved out — phases 5/6)
+        return frame
 
+    # ── Right rail (phase 6) ─────────────────────────────────────────────────
+
+    _ACTIVITY_LABELS = {
+        ('insert', 'companies'): ('＋', 'New company'),
+        ('update', 'companies'): ('✎', 'Updated company'),
+        ('delete', 'companies'): ('✕', 'Removed company'),
+        ('insert', 'valuations'): ('↗', 'Added valuation'),
+        ('update', 'valuations'): ('✎', 'Updated valuation'),
+        ('delete', 'valuations'): ('✕', 'Removed valuation'),
+        ('insert', 'funding_rounds'): ('＋', 'Added round'),
+        ('insert', 'cashflows'): ('◈', 'Added cash flow'),
+        ('insert', 'company_updates'): ('✎', 'Journal entry'),
+        ('migration', 'schema'): ('⚙', 'Schema upgraded'),
+    }
+
+    def _rail_card(self, title, badge=None):
+        from ui.styles import AMBER_SOFT, BORDER_SOFT, RADIUS
+        card = QFrame()
+        card.setObjectName("RailCard")
+        card.setStyleSheet(
+            f"QFrame#RailCard {{ background:{CARD}; border:1px solid "
+            f"{BORDER_SOFT}; border-radius:{RADIUS}px; }}")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 13, 16, 14)
+        lay.setSpacing(9)
+        head = QHBoxLayout()
+        t = QLabel(title)
+        t.setStyleSheet(f"font-weight:bold; font-size:10.5pt; "
+                        f"color:{TEXT}; border:none;")
+        head.addWidget(t)
+        if badge is not None:
+            b = QLabel(str(badge))
+            b.setStyleSheet(f"background:{AMBER_SOFT}; color:{AMBER}; "
+                            f"border-radius:8px; padding:1px 8px; "
+                            f"font-size:8pt; font-weight:700; "
+                            f"border:none;")
+            head.addWidget(b)
+        head.addStretch()
+        lay.addLayout(head)
+        return card, lay, head
+
+    def _build_rail_cards(self, all_cos, known, rounds_by, sym):
+        from ui.styles import ACCENT_LITE, AMBER_SOFT
+        names = {c['id']: c['name'] for c in all_cos}
+
+        # ── Recent Activity ────────────────────────────────────────────
+        card, lay, head = self._rail_card("Recent Activity")
+        va = QPushButton("View all")
+        va.setCursor(Qt.CursorShape.PointingHandCursor)
+        va.setStyleSheet(
+            f"QPushButton {{ background:transparent; color:{ACCENT}; "
+            f"border:none; font-weight:600; font-size:8.5pt; }}")
+        va.clicked.connect(self.show_history.emit)
+        head.addWidget(va)
+        events = [e for e in models.get_audit_log(limit=12)
+                  if e.get('origin') != 'migration'][:4]
+        if not events:
+            e = QLabel("No activity recorded yet.")
+            e.setStyleSheet(f"color:{MUTED}; font-size:9pt; border:none;")
+            lay.addWidget(e)
+        for ev in events:
+            icon, label = self._ACTIVITY_LABELS.get(
+                (ev['action'], ev['table_name']),
+                ('•', f"{ev['action']} {ev['table_name']}"))
+            row = QHBoxLayout()
+            row.setSpacing(9)
+            ic = QLabel(icon)
+            ic.setFixedSize(26, 26)
+            ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ic.setStyleSheet(f"background:{ACCENT_LITE}; color:{ACCENT}; "
+                             f"border-radius:7px; font-size:10pt; "
+                             f"border:none;")
+            row.addWidget(ic)
+            col = QVBoxLayout()
+            col.setSpacing(0)
+            l1 = QLabel(label)
+            l1.setStyleSheet(f"color:{TEXT}; font-size:9pt; "
+                             f"font-weight:600; border:none;")
+            subject = names.get(ev.get('company_id'), '')
+            l2 = QLabel(subject or '—')
+            l2.setStyleSheet(f"color:{MUTED}; font-size:8.5pt; "
+                             f"border:none;")
+            col.addWidget(l1)
+            col.addWidget(l2)
+            row.addLayout(col, 1)
+            try:
+                from datetime import datetime
+                d = datetime.fromisoformat(
+                    ev['ts_utc'].replace('Z', '')).strftime('%b %d')
+            except (ValueError, AttributeError):
+                d = (ev.get('ts_utc') or '')[:10]
+            dl = QLabel(d)
+            dl.setStyleSheet(f"color:{MUTED}; font-size:8pt; "
+                             f"border:none;")
+            row.addWidget(dl)
+            lay.addLayout(row)
+        self._rail_lay.addWidget(card)
+
+        # ── Quick Actions ──────────────────────────────────────────────
+        card, lay, _head = self._rail_card("Quick Actions")
+        for icon, label, key in (("＋", "Add Company", 'add'),
+                                 ("⬇", "Import Data", 'import'),
+                                 ("📄", "Generate Report", 'report'),
+                                 ("⇄", "Compare Portfolios", 'compare')):
+            b = QPushButton(f"{icon}   {label}")
+            b.setObjectName("QuickBtn")
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                f"QPushButton {{ background:{CARD_ALT}; color:{TEXT}; "
+                f"border:1px solid rgba(255,255,255,0.06); "
+                f"border-radius:8px; padding:9px 12px; "
+                f"text-align:left; font-weight:600; font-size:9pt; }} "
+                f"QPushButton:hover {{ background:{HOVER}; }}")
+            b.clicked.connect(lambda _, k=key: self.quick_action.emit(k))
+            lay.addWidget(b)
+        self._rail_lay.addWidget(card)
+
+        # ── Alerts & Reminders (same companies as the old stale list) ─
+        stale = self._stale_companies(known, rounds_by)
+        card, lay, _head = self._rail_card("Alerts & Reminders",
+                                           badge=len(stale) or None)
+        if not stale:
+            ok = QLabel("✓  No alerts — all valuations are recent")
+            ok.setStyleSheet(f"color:{GREEN}; font-size:9pt; "
+                             f"border:none;")
+            lay.addWidget(ok)
+        for name in stale[:5]:
+            row = QLabel(f"⚠  <b>{name}</b><br>"
+                         f"<span style='color:{MUTED};'>Stale valuation "
+                         f"(&gt;12 months)</span>")
+            row.setStyleSheet(f"color:{AMBER}; font-size:8.5pt; "
+                              f"border:none; background:{AMBER_SOFT}; "
+                              f"border-radius:7px; padding:6px 9px;")
+            lay.addWidget(row)
+        if len(stale) > 5:
+            more = QPushButton(f"View all alerts ({len(stale)})")
+            more.setCursor(Qt.CursorShape.PointingHandCursor)
+            more.setStyleSheet(
+                f"QPushButton {{ background:transparent; "
+                f"color:{ACCENT}; border:1px solid "
+                f"rgba(255,255,255,0.08); border-radius:8px; "
+                f"padding:7px; font-weight:600; font-size:8.5pt; }}")
+            more.clicked.connect(lambda: self._show_all_alerts(stale))
+            lay.addWidget(more)
+        self._rail_lay.addWidget(card)
+        self._rail_lay.addStretch()
+
+    def _show_all_alerts(self, stale):
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self, "Alerts & Reminders",
+            "Stale valuations (not updated in 12+ months):\n\n"
+            + "\n".join(f"⚠  {n}" for n in stale))
+
+    def _stale_companies(self, known, rounds_by):
+        """EXACTLY the list the old health-card panel showed: valued
+        companies whose latest dated round is older than 12 months (or
+        undated)."""
+        from datetime import date, timedelta
         cutoff = (date.today() - timedelta(days=365)).isoformat()
-        stale  = []
+        stale = []
         for c in known:
             rds = rounds_by.get(c['id'], [])
             dated = [r.get('date') or '' for r in rds if r.get('date')]
-            last  = max(dated) if dated else ''
+            last = max(dated) if dated else ''
             if not last or last < cutoff:
                 stale.append(c['name'])
-
-        stale_col = QVBoxLayout()
-        stale_col.setSpacing(4)
-        sl_lbl = QLabel("Stale valuations (not updated in 12+ months)")
-        sl_lbl.setStyleSheet(f"color:{MUTED}; font-size:9pt; font-weight:bold; border:none;")
-        stale_col.addWidget(sl_lbl)
-        if stale:
-            for name in stale:
-                w = QLabel(f"⚠  {name}")
-                w.setStyleSheet(f"color:{AMBER}; font-size:9pt; border:none;")
-                stale_col.addWidget(w)
-        else:
-            ok = QLabel("✓  All valuations are recent")
-            ok.setStyleSheet(f"color:{GREEN}; font-size:9pt; border:none;")
-            stale_col.addWidget(ok)
-        stale_col.addStretch()
-        details_row.addLayout(stale_col, 1)
-
-        lay.addLayout(details_row)
-        return frame
+        return stale
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _clear(self):
+        self._clear_layout(self._rail_lay)
         while self._layout.count():
             item = self._layout.takeAt(0)
             w    = item.widget()
