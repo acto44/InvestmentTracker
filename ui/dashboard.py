@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QTableWidget, QTableWidgetItem, QSizePolicy,
     QGridLayout, QPushButton, QLineEdit
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 
 import models
@@ -67,6 +67,54 @@ class _HeroArt(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(int(cx - 3), int(cy - 3), 6, 6)
         p.end()
+
+
+class _Sparkline(QWidget):
+    """Tiny value-over-time polyline for holding rows. Values come from
+    the REAL derived series; a constant series draws honestly flat."""
+
+    def __init__(self, values, parent=None):
+        super().__init__(parent)
+        self._values = [v for v in values if v is not None]
+        self.setFixedSize(92, 26)
+
+    def paintEvent(self, event):
+        from PyQt6.QtCore import QPointF
+        from PyQt6.QtGui import QColor, QPainter, QPen
+        from ui.styles import CHART_ACCENT
+        if len(self._values) < 2:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        lo, hi = min(self._values), max(self._values)
+        span = (hi - lo) or 1.0
+        n = len(self._values)
+        pts = [QPointF(3 + i * (self.width() - 6) / (n - 1),
+                       self.height() - 5
+                       - (v - lo) / span * (self.height() - 10))
+               for i, v in enumerate(self._values)]
+        pen = QPen(QColor(CHART_ACCENT), 1.6)
+        p.setPen(pen)
+        for a, b in zip(pts, pts[1:]):
+            p.drawLine(a, b)
+        p.end()
+
+
+_AVATAR_COLORS = ('#3B82F6', '#8B5CF6', '#0EA5E9', '#10B981',
+                  '#F59E0B', '#EC4899', '#64748B')
+
+
+def _avatar(name: str) -> QLabel:
+    """24px rounded square with the company initial — color picked by
+    name hash so it is stable across refreshes."""
+    lbl = QLabel((name or '?')[0].upper())
+    color = _AVATAR_COLORS[hash(name) % len(_AVATAR_COLORS)]
+    lbl.setFixedSize(24, 24)
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lbl.setStyleSheet(f"background:{color}; color:white; "
+                      f"border-radius:6px; font-size:10pt; "
+                      f"font-weight:700; border:none;")
+    return lbl
 
 
 class _Bar(QWidget):
@@ -317,6 +365,9 @@ class _MiniTable(QFrame):
 # ── Main dashboard ────────────────────────────────────────────────────────────
 
 class DashboardTab(QWidget):
+    open_company = pyqtSignal(int)     # chevron on a holding row
+    view_all = pyqtSignal()            # "View all →" on Top 5 Holdings
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._entity_filter: str | None = None
@@ -457,6 +508,13 @@ class DashboardTab(QWidget):
             self._build_health_section(companies, co_met, rounds_by, sym)
         )
 
+        # ── Top 5 Holdings (extended) + Allocation by Sector ─────────────────
+        holdings_row = QHBoxLayout()
+        holdings_row.setSpacing(16)
+        holdings_row.addWidget(self._top5_card(companies, co_met, sym), 3)
+        holdings_row.addWidget(self._sector_donut_card(companies, co_met), 2)
+        self._layout.addLayout(holdings_row)
+
         # ── 2. Entity breakdown (only shown in combined "All" view) ──────────
         if not self._entity_filter:
             self._layout.addWidget(_SectionTitle("By Portfolio"))
@@ -493,10 +551,9 @@ class DashboardTab(QWidget):
         # (the portfolio-value chart moved to the top card in phase 3)
         if HAS_MPL:
             chart_row = QHBoxLayout()
-            chart_row.setSpacing(12)
+            chart_row.setSpacing(16)
             chart_row.addWidget(self._top_holdings_chart(companies, co_met, sym), 3)
             chart_row.addWidget(self._returns_chart(known, co_met, sym), 2)
-            chart_row.addWidget(self._sector_chart(companies, co_met, sym), 2)
             self._layout.addLayout(chart_row)
 
         # ── 4. Top contributors / Worst performers ────────────────────────────
@@ -1184,6 +1241,217 @@ class DashboardTab(QWidget):
 
         return frame
 
+    def _top5_card(self, companies, co_met, sym):
+        """Top 5 Holdings, extended per the target: avatar, invested,
+        current value, MOIC (green ≥1× / red below), ownership %,
+        % of total, sparkline from the real derived series, chevron."""
+        from datetime import date as _date, timedelta as _td
+
+        from PyQt6.QtWidgets import QGridLayout
+
+        from ui.styles import BORDER_SOFT, RADIUS, label_font
+
+        card = QFrame()
+        card.setObjectName("Top5Card")
+        card.setStyleSheet(
+            f"QFrame#Top5Card {{ background:{CARD}; border:1px solid "
+            f"{BORDER_SOFT}; border-radius:{RADIUS}px; }}")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setSpacing(10)
+
+        head = QHBoxLayout()
+        title = QLabel("Top 5 Holdings "
+                       f"<span style='color:{MUTED}; font-size:9pt;'>"
+                       f"(% of invested capital)</span>")
+        title.setStyleSheet(f"font-weight:bold; font-size:11pt; "
+                            f"color:{TEXT}; border:none;")
+        head.addWidget(title)
+        head.addStretch()
+        view_all = QPushButton("View all →")
+        view_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        view_all.setStyleSheet(
+            f"QPushButton {{ background:transparent; color:{ACCENT}; "
+            f"border:none; font-weight:600; font-size:9pt; }}")
+        view_all.clicked.connect(self.view_all.emit)
+        head.addWidget(view_all)
+        lay.addLayout(head)
+
+        total_invested = sum(co_met[c['id']]['total_invested']
+                             for c in companies) or 1.0
+        top5 = sorted(companies,
+                      key=lambda c: co_met[c['id']]['total_invested'],
+                      reverse=True)[:5]
+        by_id = {c['id']: (c, r, v, f) for c, r, v, f in
+                 models.timeseries_inputs(entity=self._entity_filter
+                                          or None)}
+        today = _date.today()
+        grid_dates = m.month_end_grid(today - _td(days=365), today)
+
+        g = QGridLayout()
+        g.setHorizontalSpacing(14)
+        g.setVerticalSpacing(8)
+        headers = ("Company", "Invested", "Current Value", "MOIC",
+                   "Ownership", "% of total", "", "")
+        for ci, h in enumerate(headers):
+            hl = QLabel(h.upper())
+            hl.setFont(label_font())
+            hl.setStyleSheet(f"color:{MUTED}; font-size:7.5pt; "
+                             f"font-weight:600; border:none;")
+            if 1 <= ci <= 5:
+                hl.setAlignment(Qt.AlignmentFlag.AlignRight)
+            g.addWidget(hl, 0, ci)
+
+        def cell(text, color=None, right=True):
+            l = QLabel(str(text))
+            l.setStyleSheet(f"color:{color or TEXT}; font-size:9.5pt; "
+                            f"border:none;")
+            if right:
+                l.setAlignment(Qt.AlignmentFlag.AlignRight
+                               | Qt.AlignmentFlag.AlignVCenter)
+            return l
+
+        for ri, c in enumerate(top5, start=1):
+            met = co_met[c['id']]
+            inv = met['total_invested']
+            cur = met.get('current_value')
+            moic = met.get('moic')
+            name_row = QHBoxLayout()
+            name_row.setSpacing(8)
+            name_row.addWidget(_avatar(c['name']))
+            nm = QLabel(c['name'])
+            nm.setStyleSheet(f"color:{TEXT}; font-size:9.5pt; "
+                             f"font-weight:600; border:none;")
+            name_row.addWidget(nm)
+            name_row.addStretch()
+            nw = QWidget()
+            nw.setLayout(name_row)
+            g.addWidget(nw, ri, 0)
+
+            g.addWidget(cell(f"{sym} {inv:,.0f}"), ri, 1)
+            g.addWidget(cell(f"{sym} {cur:,.0f}" if cur is not None
+                             else "—", None if cur else MUTED), ri, 2)
+            if moic is None:
+                g.addWidget(cell("n/a", MUTED), ri, 3)
+            else:
+                g.addWidget(cell(f"{moic:.2f}×",
+                                 GREEN if moic >= 1.0 else RED), ri, 3)
+
+            tpl = by_id.get(c['id'])
+            own = (m.ownership_at(tpl[1], tpl[3], today)
+                   if tpl else None)
+            g.addWidget(cell(f"{own:.1f}%" if own is not None else "n/a",
+                             None if own is not None else MUTED), ri, 4)
+            g.addWidget(cell(f"{inv / total_invested * 100:.1f}%"), ri, 5)
+
+            spark_vals = []
+            if tpl:
+                spark_vals = [p['nav'] for p in
+                              m.nav_series([tpl], grid_dates)]
+            g.addWidget(_Sparkline(spark_vals), ri, 6)
+
+            ch = QPushButton("›")
+            ch.setFixedSize(24, 24)
+            ch.setCursor(Qt.CursorShape.PointingHandCursor)
+            ch.setStyleSheet(
+                f"QPushButton {{ background:transparent; color:{MUTED}; "
+                f"border:none; font-size:13pt; }} "
+                f"QPushButton:hover {{ color:{ACCENT}; }}")
+            ch.clicked.connect(
+                lambda _, cid=c['id']: self.open_company.emit(cid))
+            g.addWidget(ch, ri, 7)
+
+        g.setColumnStretch(0, 3)
+        lay.addLayout(g)
+        return card
+
+    def _sector_donut_card(self, companies, co_met):
+        """Allocation by Sector: donut + side legend. Same bucketing as
+        the old sector chart (invested capital, top 6 + Other) so the
+        figures are identical."""
+        from ui.styles import BORDER_SOFT, RADIUS
+
+        card = QFrame()
+        card.setObjectName("SectorCard")
+        card.setStyleSheet(
+            f"QFrame#SectorCard {{ background:{CARD}; border:1px solid "
+            f"{BORDER_SOFT}; border-radius:{RADIUS}px; }}")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setSpacing(8)
+        title = QLabel("Allocation by Sector")
+        title.setStyleSheet(f"font-weight:bold; font-size:11pt; "
+                            f"color:{TEXT}; border:none;")
+        lay.addWidget(title)
+
+        by_sector: dict[str, float] = {}
+        for c in companies:
+            sector = (c.get('sector') or '').strip() or 'Other'
+            by_sector[sector] = (by_sector.get(sector, 0)
+                                 + co_met[c['id']]['total_invested'])
+        by_sector = {k: v for k, v in by_sector.items() if v > 0}
+        if not by_sector:
+            e = QLabel("No sector data yet.")
+            e.setStyleSheet(f"color:{MUTED}; border:none;")
+            lay.addWidget(e)
+            return card
+
+        ranked = sorted(by_sector.items(), key=lambda kv: kv[1],
+                        reverse=True)
+        merged = dict(ranked[:6])
+        if ranked[6:]:
+            merged['Other'] = (merged.get('Other', 0)
+                               + sum(v for _, v in ranked[6:]))
+        pairs = sorted(((k, v) for k, v in merged.items()
+                        if k != 'Other'),
+                       key=lambda kv: kv[1], reverse=True)
+        if 'Other' in merged:
+            pairs.append(('Other', merged['Other']))
+        names = [k for k, _ in pairs]
+        values = [v for _, v in pairs]
+        total = sum(values)
+        palette = ['#3B82F6', '#8B5CF6', '#0EA5E9', '#10B981',
+                   '#F59E0B', '#EC4899']
+        colors = [palette[i % len(palette)] for i in range(len(names))]
+        if names[-1] == 'Other':
+            colors[-1] = '#64748B'
+
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        if HAS_MPL:
+            fig = Figure(figsize=(2.3, 2.3), facecolor=CARD)
+            ax = fig.add_subplot(111)
+            ax.set_facecolor(CARD)
+            ax.pie(values, colors=colors, startangle=90,
+                   counterclock=False,
+                   wedgeprops={'width': 0.36, 'edgecolor': CARD,
+                               'linewidth': 2})
+            fig.tight_layout(pad=0.2)
+            canvas = FigureCanvasQTAgg(fig)
+            canvas.setFixedSize(170, 170)
+            row.addWidget(canvas)
+        legend = QVBoxLayout()
+        legend.setSpacing(6)
+        legend.addStretch()
+        for n, v, col in zip(names, values, colors):
+            lr = QHBoxLayout()
+            lr.setSpacing(8)
+            dot = QLabel("●")
+            dot.setStyleSheet(f"color:{col}; font-size:9pt; border:none;")
+            lr.addWidget(dot)
+            nl = QLabel(n)
+            nl.setStyleSheet(f"color:{TEXT}; font-size:9pt; border:none;")
+            lr.addWidget(nl, 1)
+            pl = QLabel(f"{v / total * 100:.0f}%")
+            pl.setStyleSheet(f"color:{MUTED}; font-size:9pt; "
+                             f"border:none;")
+            lr.addWidget(pl)
+            legend.addLayout(lr)
+        legend.addStretch()
+        row.addLayout(legend, 1)
+        lay.addLayout(row)
+        return card
+
     def _build_health_section(self, companies, co_met, rounds_by, sym):
         from datetime import date, timedelta
 
@@ -1264,20 +1532,8 @@ class DashboardTab(QWidget):
 
         details_row = QHBoxLayout()
         details_row.setSpacing(16)
-
-        top5_rows = [
-            (c['name'],
-             f"{sym} {co_met[c['id']]['total_invested']:,.0f}",
-             f"{co_met[c['id']]['total_invested']/total_invested*100:.1f}%")
-            for c in sorted_co[:5]
-        ]
-        top5_col = QVBoxLayout()
-        top5_col.setSpacing(4)
-        t5_lbl = QLabel("Top 5 holdings (% of invested capital)")
-        t5_lbl.setStyleSheet(f"color:{MUTED}; font-size:9pt; font-weight:bold; border:none;")
-        top5_col.addWidget(t5_lbl)
-        top5_col.addWidget(_MiniTable(["Company", "Invested", "% of total"], top5_rows))
-        details_row.addLayout(top5_col, 2)
+        # (the Top 5 holdings table moved to its own extended card in
+        # phase 5; the stale list moves to the right rail in phase 6)
 
         cutoff = (date.today() - timedelta(days=365)).isoformat()
         stale  = []

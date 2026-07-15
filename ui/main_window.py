@@ -236,6 +236,9 @@ class MainWindow(QMainWindow):
 
         # Dashboard tab
         self.dashboard = DashboardTab()
+        self.dashboard.open_company.connect(self._open_company)
+        self.dashboard.view_all.connect(
+            lambda: self.tabs.setCurrentIndex(2))
         self.tabs.addTab(self.dashboard, "  Dashboard  ")
 
         # Portfolio tab
