@@ -69,6 +69,38 @@ class _HeroArt(QWidget):
         p.end()
 
 
+class _Ring(QWidget):
+    """Circular progress ring (target: 'Valuations covered')."""
+
+    def __init__(self, pct: float, parent=None):
+        super().__init__(parent)
+        self._pct = max(0.0, min(100.0, pct))
+        self.setFixedSize(84, 84)
+
+    def paintEvent(self, event):
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(6, 6, self.width() - 12, self.height() - 12)
+        base = QPen(QColor(148, 163, 184, 46), 8)
+        base.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(base)
+        p.drawArc(rect, 0, 360 * 16)
+        arc = QPen(QColor(GREEN), 8)
+        arc.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(arc)
+        p.drawArc(rect, 90 * 16, int(-self._pct * 3.6 * 16))
+        p.setPen(QColor(TEXT))
+        f = QFont()
+        f.setPointSize(11)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                   f"{self._pct:.0f}%")
+        p.end()
+
+
 class _HeroBanner(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -106,18 +138,20 @@ class _HeroBanner(QFrame):
         row.addWidget(art)
 
 
-def _pill_style(active: bool) -> str:
+def _pill_style(active: bool, compact: bool = False) -> str:
     """THE filter-pill style — every toggle row (portfolio, type, chart
-    range) uses exactly this active/inactive pair."""
+    metric/range) uses exactly this active/inactive pair. compact =
+    tighter padding for fixed-width pills like 1M/3M/…/ALL."""
     from ui.styles import ACCENT_LITE, BORDER_SOFT, RADIUS_SM
+    pad = "4px 8px" if compact else "4px 16px"
     if active:
         return (f"QPushButton {{ background:{ACCENT_LITE}; color:{ACCENT}; "
                 f"border:1px solid rgba(59,130,246,0.45); "
-                f"border-radius:{RADIUS_SM}px; padding:4px 16px; "
+                f"border-radius:{RADIUS_SM}px; padding:{pad}; "
                 f"font-weight:600; font-size:9pt; }}")
     return (f"QPushButton {{ background:transparent; color:{MUTED}; "
             f"border:1px solid {BORDER_SOFT}; "
-            f"border-radius:{RADIUS_SM}px; padding:4px 16px; "
+            f"border-radius:{RADIUS_SM}px; padding:{pad}; "
             f"font-weight:600; font-size:9pt; }}"
             f"QPushButton:hover {{ background:{HOVER}; color:{TEXT}; }}")
 
@@ -346,6 +380,15 @@ class DashboardTab(QWidget):
                    f"({coverage:.0f}% of invested capital)</span>")
         )
 
+        # ── Portfolio value chart + summary card (target design) ──────────
+        if HAS_MPL:
+            hero_row = QHBoxLayout()
+            hero_row.setSpacing(16)
+            hero_row.addWidget(self._value_chart_card(sym), 3)
+            hero_row.addWidget(self._summary_card(sym, coverage), 1)
+            self._layout.addLayout(hero_row)
+            self._add_quarter_delta(sym)
+
         gain_color = GREEN if total_gain_known >= 0 else RED
         sign       = "+" if total_gain_known >= 0 else "−"
         gain_str   = f"{sign}{sym} {abs(total_gain_known):,.0f}"
@@ -418,22 +461,9 @@ class DashboardTab(QWidget):
                 ))
             self._layout.addLayout(entity_row)
 
-        # ── 3. Charts ─────────────────────────────────────────────────────────
+        # ── 3. Secondary charts ──────────────────────────────────────────────
+        # (the portfolio-value chart moved to the top card in phase 3)
         if HAS_MPL:
-            self._layout.addWidget(_SectionTitle("Portfolio Over Time"))
-            self._add_quarter_delta(sym)
-            range_row = QHBoxLayout()
-            for label in ('1Y', '3Y', 'All'):
-                b = QPushButton(label)
-                b.setFixedWidth(48)
-                active = getattr(self, '_ts_range', 'All') == label
-                b.setStyleSheet(_pill_style(active))
-                b.clicked.connect(lambda _, l=label: self._set_ts_range(l))
-                range_row.addWidget(b)
-            range_row.addStretch()
-            self._layout.addLayout(range_row)
-            self._layout.addWidget(self._timeline_chart(sym))
-
             chart_row = QHBoxLayout()
             chart_row.setSpacing(12)
             chart_row.addWidget(self._top_holdings_chart(companies, co_met, sym), 3)
@@ -504,9 +534,240 @@ class DashboardTab(QWidget):
 
     # ── Charts ────────────────────────────────────────────────────────────────
 
+    METRIC_TABS = (('value', 'Total Value'), ('gain', 'Gain / Loss'),
+                   ('moic', 'MOIC'), ('irr', 'IRR'))
+    RANGES = (('1M', 31), ('3M', 92), ('6M', 183), ('1Y', 365),
+              ('3Y', 1095), ('ALL', None))
+
     def _set_ts_range(self, label):
         self._ts_range = label
         self.refresh()
+
+    def _set_ts_metric(self, key):
+        self._ts_metric = key
+        self.refresh()
+
+    def _metric_values(self, series, data, metric):
+        """Selected metric per grid point — pure transforms of the
+        derived nav_series (CLAUDE.md: time series are derived)."""
+        if metric == 'gain':
+            return ([p['nav'] + p['realized_cum'] - p['invested_cum']
+                     for p in series], lambda v: f"{v:+,.0f}")
+        if metric == 'moic':
+            return ([((p['nav'] + p['realized_cum']) / p['invested_cum'])
+                     if p['invested_cum'] > 0 else None for p in series],
+                    lambda v: f"{v:.2f}×")
+        if metric == 'irr':
+            flows = []
+            for _c, _r, _v, fl in data:
+                for f in fl:
+                    if f.get('date'):
+                        flows.append((f['date'],
+                                      m.signed_amount(f['type'],
+                                                      f['amount'])))
+            flows.sort()
+            vals = []
+            for p in series:
+                iso = p['date'].isoformat()
+                sub = [(d, a) for d, a in flows if d <= iso]
+                if p['nav'] > 0:
+                    sub = sub + [(iso, p['nav'])]
+                r = m.irr(sub, p['date']) if len(sub) >= 2 else None
+                vals.append(r * 100 if r is not None else None)
+            return vals, lambda v: f"{v:.1f}%"
+        return [p['nav'] for p in series], lambda v: f"{v:,.0f}"
+
+    def _value_chart_card(self, sym):
+        """The target's centerpiece: metric tabs + range pills + orange
+        area chart with a hover crosshair. Reads ONLY the derived
+        series — no stored snapshots."""
+        from datetime import date as _date, timedelta as _td
+
+        from ui.styles import BORDER_SOFT, CHART_ACCENT, RADIUS
+
+        card = QFrame()
+        card.setObjectName("ChartCard")
+        card.setStyleSheet(
+            f"QFrame#ChartCard {{ background:{CARD}; border:1px solid "
+            f"{BORDER_SOFT}; border-radius:{RADIUS}px; }}")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 14, 16, 10)
+        lay.setSpacing(8)
+
+        metric = getattr(self, '_ts_metric', 'value')
+        rng = getattr(self, '_ts_range', '1Y')
+
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        for key, label in self.METRIC_TABS:
+            b = QPushButton(label)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(_pill_style(metric == key))
+            b.clicked.connect(lambda _, k=key: self._set_ts_metric(k))
+            head.addWidget(b)
+        head.addStretch()
+        for label, _days in self.RANGES:
+            b = QPushButton(label)
+            b.setFixedWidth(46)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(_pill_style(rng == label, compact=True))
+            b.clicked.connect(lambda _, l=label: self._set_ts_range(l))
+            head.addWidget(b)
+        lay.addLayout(head)
+
+        data = models.timeseries_inputs(entity=self._entity_filter or None)
+        first = m.first_flow_date(data)
+        today = _date.today()
+        if first is None:
+            lbl = QLabel("No dated cash flows yet — the chart appears "
+                         "after the first investment is recorded.")
+            lbl.setStyleSheet(f"color:{MUTED}; border:none;")
+            lay.addWidget(lbl)
+            return card
+        days = dict(self.RANGES)[rng]
+        if days:
+            first = max(first, today - _td(days=days))
+        span = (today - first).days
+        if span <= 200:                      # dense grid on short ranges
+            grid = [first + _td(days=i) for i in range(span + 1)]
+        elif span <= 750:
+            grid = [first + _td(days=i) for i in range(0, span + 1, 7)]
+            if grid[-1] != today:
+                grid.append(today)
+        else:
+            grid = m.month_end_grid(first, today)
+        series = m.nav_series(data, grid)
+        ys, y_fmt = self._metric_values(series, data, metric)
+
+        fig = Figure(figsize=(8.6, 3.1), facecolor=CARD)
+        ax = fig.add_subplot(111)
+        _style_axes(ax)
+        pts = [(p['date'], y) for p, y in zip(series, ys) if y is not None]
+        canvas = FigureCanvasQTAgg(fig)
+        if pts:
+            px = [a for a, _ in pts]
+            py = [b for _, b in pts]
+            ax.plot(px, py, color=CHART_ACCENT, linewidth=2.2)
+            if metric in ('value', 'gain'):
+                ax.fill_between(px, py, 0, color=CHART_ACCENT, alpha=0.09)
+            est = [(p['date'], y) for p, y in zip(series, ys)
+                   if y is not None and p['is_estimate']]
+            if est:
+                stride = max(1, len(est) // 24)   # keep the flag readable,
+                est = est[::stride]               # not a dashed-line effect
+                ax.plot([a for a, _ in est], [b for _, b in est], 'o',
+                        color=MUTED, markersize=2.5)
+            if metric == 'value':
+                ax.yaxis.set_major_formatter(
+                    matplotlib.ticker.FuncFormatter(
+                        lambda v, _: f"{int(v / 1000)}K"
+                        if abs(v) >= 1000 else str(int(v))))
+            ax.tick_params(axis='both', labelsize=8)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.margins(x=0.01)
+            fig.tight_layout(pad=1.0)
+
+            # hover crosshair + tooltip
+            import matplotlib.dates as mdates
+            xnums = mdates.date2num(px)
+            vline = ax.axvline(px[0], color=MUTED, linewidth=0.8, alpha=0)
+            dot, = ax.plot([], [], 'o', color=CHART_ACCENT, markersize=5)
+            annot = ax.annotate(
+                '', xy=(px[0], py[0]), xytext=(12, 14),
+                textcoords='offset points', color=TEXT, fontsize=8,
+                bbox=dict(boxstyle='round,pad=0.45', fc=CARD_ALT,
+                          ec=BORDER, lw=1))
+            annot.set_visible(False)
+
+            def _on_move(event):
+                if event.inaxes != ax or event.xdata is None:
+                    if annot.get_visible():
+                        annot.set_visible(False)
+                        vline.set_alpha(0)
+                        dot.set_data([], [])
+                        canvas.draw_idle()
+                    return
+                i = min(range(len(xnums)),
+                        key=lambda k: abs(xnums[k] - event.xdata))
+                vline.set_xdata([px[i], px[i]])
+                vline.set_alpha(0.55)
+                dot.set_data([px[i]], [py[i]])
+                annot.xy = (px[i], py[i])
+                annot.set_text(f"{px[i].isoformat()}\n{y_fmt(py[i])}")
+                annot.set_visible(True)
+                canvas.draw_idle()
+
+            canvas.mpl_connect('motion_notify_event', _on_move)
+        else:
+            ax.text(0.5, 0.5, 'not computable for this range',
+                    transform=ax.transAxes, ha='center', color=MUTED,
+                    fontsize=9)
+        canvas.setMinimumHeight(250)
+        lay.addWidget(canvas)
+        return card
+
+    def _summary_card(self, sym, coverage_pct):
+        """Total Portfolio Value + %-vs-last-year + coverage ring."""
+        from datetime import date as _date, timedelta as _td
+
+        from ui.styles import BORDER_SOFT, RADIUS, label_font
+
+        card = QFrame()
+        card.setObjectName("SummaryCard")
+        card.setStyleSheet(
+            f"QFrame#SummaryCard {{ background:{CARD}; border:1px solid "
+            f"{BORDER_SOFT}; border-radius:{RADIUS}px; }}")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(20, 18, 20, 18)
+        lay.setSpacing(6)
+
+        t = QLabel("TOTAL PORTFOLIO VALUE")
+        t.setFont(label_font())
+        t.setStyleSheet(f"color:{MUTED}; font-size:8pt; "
+                        f"font-weight:600; border:none;")
+        lay.addWidget(t)
+
+        data = models.timeseries_inputs(entity=self._entity_filter or None)
+        first = m.first_flow_date(data)
+        today = _date.today()
+        nav_now, prev = 0.0, None
+        is_est = False
+        if first is not None:
+            series = m.nav_series(data, [today - _td(days=365), today])
+            nav_now = series[-1]['nav']
+            is_est = series[-1]['is_estimate']
+            if first <= today - _td(days=365):
+                prev = series[0]['nav']
+
+        v = QLabel(f"{sym} {nav_now:,.0f}")
+        v.setStyleSheet(f"font-size:21pt; font-weight:700; color:{TEXT}; "
+                        f"border:none;")
+        lay.addWidget(v)
+
+        if prev:
+            pct = (nav_now - prev) / prev * 100
+            color = GREEN if pct >= 0 else RED
+            d = QLabel(f"{'▲' if pct >= 0 else '▼'} {pct:+.1f}% "
+                       f"vs. last year")
+            d.setStyleSheet(f"color:{color}; font-size:9.5pt; "
+                            f"border:none;")
+            lay.addWidget(d)
+        if is_est:
+            e = QLabel("contains estimated positions")
+            e.setStyleSheet(f"color:{MUTED}; font-size:8pt; border:none;")
+            lay.addWidget(e)
+        lay.addStretch()
+
+        ring_row = QHBoxLayout()
+        ring_row.setSpacing(12)
+        ring_row.addWidget(_Ring(coverage_pct))
+        rl = QLabel("Valuations\ncovered")
+        rl.setStyleSheet(f"color:{MUTED}; font-size:9pt; border:none;")
+        ring_row.addWidget(rl)
+        ring_row.addStretch()
+        lay.addLayout(ring_row)
+        return card
 
     def _add_quarter_delta(self, sym):
         """Small KPI: NAV now vs previous quarter-end (metrics does the
@@ -527,57 +788,6 @@ class DashboardTab(QWidget):
             f"<span style='color:{MUTED};'>{est}</span>")
         lbl.setStyleSheet("font-size:10pt;")
         self._layout.addWidget(lbl)
-
-    def _timeline_chart(self, sym):
-        """NAV / cumulative invested / cumulative realized over month-end
-        grid — DERIVED from dated valuations and flows (see CLAUDE.md)."""
-        from datetime import date as _date, timedelta as _td
-        data = models.timeseries_inputs(entity=self._entity_filter or None)
-        first = m.first_flow_date(data)
-        today = _date.today()
-        if first is None:
-            lbl = QLabel("No dated cash flows yet — the timeline appears "
-                         "after the first investment is recorded.")
-            lbl.setStyleSheet(f"color:{MUTED};")
-            return lbl
-        rng = getattr(self, '_ts_range', 'All')
-        if rng == '1Y':
-            first = max(first, today - _td(days=365))
-        elif rng == '3Y':
-            first = max(first, today - _td(days=3 * 365))
-        grid = m.month_end_grid(first, today)
-        series = m.nav_series(data, grid)
-
-        xs = [p['date'] for p in series]
-        fig = Figure(figsize=(9.0, 3.4), facecolor=CARD)
-        ax = fig.add_subplot(111)
-        _style_axes(ax)
-        ax.step(xs, [p['nav'] for p in series], where='post',
-                color=ACCENT, linewidth=2, label='NAV')
-        ax.step(xs, [p['invested_cum'] for p in series], where='post',
-                color=MUTED, linewidth=1.4, linestyle='--',
-                label='Invested (cum.)')
-        ax.step(xs, [p['realized_cum'] for p in series], where='post',
-                color=GREEN, linewidth=1.4, label='Realized (cum.)')
-        est_pts = [p for p in series if p['is_estimate']]
-        if est_pts:
-            ax.plot([p['date'] for p in est_pts],
-                    [p['nav'] for p in est_pts], 'o', color=MUTED,
-                    markersize=3,
-                    label='contains estimates')
-        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(
-            lambda v, _: f"{int(v/1000)}K" if abs(v) >= 1000 else str(int(v))))
-        ax.tick_params(axis='both', labelsize=8)
-        ax.legend(fontsize=8, frameon=False, loc='upper left',
-                  labelcolor=MUTED)
-        ax.set_title(f'NAV, invested and realized over time ({sym})',
-                     fontsize=10, fontweight='bold', pad=6)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        fig.tight_layout(pad=1.2)
-        canvas = FigureCanvasQTAgg(fig)
-        canvas.setMinimumHeight(260)
-        return canvas
 
     def _top_holdings_chart(self, companies, co_met, sym):
         """Horizontal bar — top 12 holdings by invested amount."""
