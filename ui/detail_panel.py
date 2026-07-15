@@ -249,6 +249,12 @@ class DetailPanel(QWidget):
             web_btn.clicked.connect(lambda _checked, u=url: QDesktopServices.openUrl(QUrl(u)))
             title_row.addWidget(web_btn)
 
+        report_btn = QPushButton("📄  Report…")
+        report_btn.setStyleSheet(_SOFT_BTN_QSS)
+        report_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        report_btn.clicked.connect(lambda: self._open_report(cid))
+        title_row.addWidget(report_btn)
+
         title_row.addStretch()
         self._cl.addLayout(title_row)
 
@@ -1030,6 +1036,10 @@ class DetailPanel(QWidget):
     def _show_history(self, cid):
         from ui.history_dialog import HistoryDialog
         HistoryDialog(self, company_id=cid).exec()
+
+    def _open_report(self, cid):
+        from ui.report_dialog import ReportDialog
+        ReportDialog(self, company_id=cid).exec()
 
     def _add_rounds_table(self, rounds, sym, target=None):
         headers = ["Round", "Date", "Invested", "Pre-Money", "Post-Money",

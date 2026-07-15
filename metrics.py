@@ -390,6 +390,11 @@ def _ownership_at(rounds: list, cashflows: list, d: date):
     return ownership
 
 
+def ownership_at(rounds: list, cashflows: list, d: date):
+    """Public alias — reports need ownership as of a date."""
+    return _ownership_at(rounds, cashflows, d)
+
+
 def position_value_at(company: dict, rounds: list, valuations: list,
                       cashflows: list, d: date) -> dict:
     """{'value': float, 'is_estimate': bool} — the position's value on d.

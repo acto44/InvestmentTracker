@@ -99,6 +99,8 @@ class MainWindow(QMainWindow):
             "Reload all data")
         act("🕘 History", self._show_history, None,
             "Read-only log of every change to companies, rounds and valuations")
+        act("📄 Report…", self._company_report, None,
+            "Create a professional per-company report (HTML/PDF)")
         tb.addSeparator()
         act("⚙ Settings", self._open_settings, None,
             "Currency and backup preferences")
@@ -106,6 +108,14 @@ class MainWindow(QMainWindow):
     def _show_history(self):
         from ui.history_dialog import HistoryDialog
         HistoryDialog(self).exec()
+
+    def _company_report(self):
+        # pick the company first (same picker as Ctrl+K)
+        from ui.quick_jump import QuickJumpDialog
+        dlg = QuickJumpDialog(self)
+        if dlg.exec() and dlg.selected_company_id is not None:
+            from ui.report_dialog import ReportDialog
+            ReportDialog(self, company_id=dlg.selected_company_id).exec()
 
     def _quick_add_company(self):
         from ui.dialogs import CompanyDialog

@@ -23,6 +23,24 @@ metrics.py               financial math: ROI, MOIC/DPI/RVPI/TVPI, date-true
                          quarter helpers, nav_quarter_delta), footnote
                          strings; keeps its own self-test
 excel_io.py              Excel import/export (openpyxl)
+formatting.py            shared display formatters (MONEY invariant) +
+                         sanitize_filename
+version.py               APP_NAME / APP_VERSION (quoted in report headers)
+reporting/               report pipeline, three strict layers:
+                         builder.py (pure as-of-correct model, raw+fmt),
+                         charts.py (matplotlib Agg → PNG at 2×, print-light
+                         palette, generic for session 6),
+                         render.py (model → QTextDocument-safe HTML; see
+                         REPORT_STYLE_NOTES; named image placeholders),
+                         export.py (write_html inlines base64; write_pdf
+                         registers QTextDocument resources + QPrinter A4).
+                         Named `reporting/` NOT `reports/` — reports/ is
+                         the gitignored OUTPUT dir for generated files and
+                         the package must never collide with it.
+                         Templates are Python string constants: nothing new
+                         to bundle for the .exe (if template FILES are ever
+                         added they must load via a resource_path() helper
+                         and be listed in the spec's datas).
 seed_demo_data.py        seed(verbose=True): fictional "ViFi" demo
                          portfolio (10 companies, 2 entities) — the ONLY
                          data allowed in fixtures/screenshots/the repo
@@ -36,6 +54,11 @@ ui/detail_panel.py       per-company tabs: Overview / Rounds / Documents
 ui/quick_jump.py         Ctrl+K fuzzy company search
 ui/dialogs.py            add/edit company, round & valuation dialogs
 ui/history_dialog.py     read-only audit-trail view (global + per company)
+ui/report_dialog.py      report export dialog: as-of date, sections,
+                         HTML/PDF/both; output folder defaults to
+                         Documents/<AppName> Reports, remembered in
+                         QSettings, warns when inside the app/repo dir
+                         (generated reports contain real data)
 ui/compare_dialog.py     side-by-side company comparison
 ui/import_dialog.py, ui/family_import_dialog.py, ui/family_edit_dialog.py
                          Excel import + entity management
@@ -171,3 +194,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | 2026-07-14 | 2 | Trustworthy data layer: backups.py (pre-migration via SQLite backup API + 24h routine, keep-10 rotation); valuation history replaces companies.current_valuation (honest legacy_migration backfill, column dropped, get_current_valuation + enriched company dicts keep all readers working); append-only audit trail written in-transaction by every mutator, with origins (ui.*, excel_import); round↔valuation link + ask-on-delete; Valuation block in Overview; read-only History view (toolbar + per company); metrics UNREALIZED_VALUE_FOOTNOTE | v2: valuations, audit_log, DROP companies.current_valuation |
 | 2026-07-14 | 3 | Cash-flow ledger: cashflows table (backfilled 1 investment flow per round), round↔flow write-through in the same transaction, signed_amount() sign convention, DPI/RVPI/TVPI + realized/unrealized split, date-true XIRR with terminal-value assumption + bracket-scan bisection for multi-sign-change cases, closed-position rule (Exited/Bankrupt ⇒ unrealized 0), shares_held + oversell guard + ownership scaling after partial sales, ledger UI in Rounds & Cash flows tab, CashflowDialog, exit-status offer, dashboard Realized + MOIC/TVPI cards, Excel Cashflows sheet + explicit no-flow-import notes, demo data gains dividends/partial sale/full exit. Incident note: the seeder was accidentally run against the repo-root db (which holds demo data; the real family db in dist/ was never touched) — the session-2 pre-migration backup restored it, and seed_demo_data now refuses a populated default-path db without --yes | v3: cashflows |
 | 2026-07-14 | 4 | Time axis: pure derived series in metrics.py (position_value_at with net-invested estimate fallback + is_estimate flag, invested/realized_to_date, month_end_grid, nav_series, quarter helpers, nav_quarter_delta) — derived-not-stored decision + same-day/closed-zero rules recorded as invariant; dashboard Portfolio-over-time chart (NAV/invested/realized steps, 1Y/3Y/All, estimate markers) + quarter-delta KPI; company position-value chart with ▲/▼ flow markers, hover tooltips, dashed estimate segments; company_updates journal (v4) with audited CRUD, Journal tab, demo entries | v4: company_updates |
+| 2026-07-14 | 5 | Company reports: reporting/ package (builder → render → export; named reporting/ because reports/ is the gitignored output dir), as-of-correct pure model with raw+fmt figures via new shared formatting.py, print-light offscreen charts (matplotlib Agg, 2×), QTextDocument-safe HTML (REPORT_STYLE_NOTES) with named image placeholders, portable single-file HTML (base64) + A4 PDF (QTextDocument resources + QPrinter), footnote appendix imports metrics.py strings, CONFIDENTIAL header/footer, AI-narrative anchor slot for session 8, ReportDialog (safe default folder in Documents, QSettings, repo-folder warning) reachable from toolbar/tree context menu/detail panel; filenames sanitized (Å/ö preserved) | none |

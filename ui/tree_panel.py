@@ -281,6 +281,7 @@ class TreePanel(QWidget):
         elif ntype == NODE_COMPANY:
             nid = int(nkey)
             menu.addAction("Add Round",       lambda: self._add_round(nid))
+            menu.addAction("Report…",         lambda: self._report(nid))
             menu.addAction("Attach Document", lambda: self._attach_doc(company_id=nid))
             menu.addSeparator()
             menu.addAction("Edit Company",    lambda: self._edit_company(nid))
@@ -327,6 +328,10 @@ class TreePanel(QWidget):
             models.delete_company(cid, origin='ui.tree_panel')
             self.refresh()
             self.selection_changed.emit("none", "0")
+
+    def _report(self, cid):
+        from ui.report_dialog import ReportDialog
+        ReportDialog(self, company_id=cid).exec()
 
     # ── Round actions ────────────────────────────────────────────────────────
 
