@@ -22,30 +22,35 @@ FONT_STACK = "'Inter', 'Segoe UI Variable Text', 'Segoe UI', sans-serif"
 # spacing scale (px)
 SP1, SP2, SP3, SP4, SP5, SP6, SP8 = 4, 8, 12, 16, 20, 24, 32
 CARD_PAD = 20
-RADIUS = 10
-RADIUS_SM = 6
+RADIUS = 14                 # target design: 12–16px cards
+RADIUS_SM = 8
 
-# ── surfaces: four elevation levels, flat ────────────────────────────────────
-BG        = "#0B0F1A"       # 0 · window
-CARD      = "#111726"       # 1 · panels, cards, tables
-CARD_ALT  = "#161D30"       # 2 · alternate rows, nested surfaces
-HOVER     = "#1C2438"       # 3 · hover / pressed surfaces
-INPUT_BG  = "#0D1220"       # fields sit just below card level
+# ── surfaces: four elevation levels, flat (target-mockup palette) ────────────
+BG        = "#0A0E1A"       # 0 · window
+CARD      = "#111827"       # 1 · panels, cards, tables
+CARD_ALT  = "#171F30"       # 2 · alternate rows, nested surfaces
+HOVER     = "#1D2638"       # 3 · hover / pressed surfaces
+INPUT_BG  = "#0D1322"       # fields sit just below card level
 BG_TOP    = BG              # compat (the gradient is retired — flat)
 
 TEXT      = "#E6EAF3"
-MUTED     = "#8B96AD"       # neutral slate (not blue-tinted)
+MUTED     = "#8B96AD"       # neutral slate
 FAINT     = "#5C6880"       # de-emphasized meta text
 
-BORDER    = "#1E2536"       # hex twin of BORDER_SOFT (matplotlib needs hex)
-BORDER_SOFT    = "rgba(148,163,184,0.12)"
-BORDER_SOFT_HI = "rgba(148,163,184,0.24)"
+BORDER    = "#1F2635"       # hex twin of BORDER_SOFT (matplotlib needs hex)
+BORDER_SOFT    = "rgba(255,255,255,0.07)"
+BORDER_SOFT_HI = "rgba(255,255,255,0.14)"
 
-# ── the ONE accent ───────────────────────────────────────────────────────────
-ACCENT        = "#6C7FF2"
-ACCENT_HOVER  = "#7F90F5"
-ACCENT_ACTIVE = "#5A6BD9"
-ACCENT_LITE   = "#1A2138"   # accent-tinted selection surface
+# ── the ONE interactive accent (target: blue) ────────────────────────────────
+ACCENT        = "#3B82F6"
+ACCENT_HOVER  = "#5B96F8"
+ACCENT_ACTIVE = "#2E6BDF"
+ACCENT_LITE   = "#152743"   # accent-tinted selection surface
+
+# charts get their OWN accent (target: orange series) — never used for
+# interactive chrome, so the one-accent rule for controls still holds
+CHART_ACCENT      = "#F97316"
+CHART_ACCENT_SOFT = "#3D2410"   # dark base for orange gradient fills
 
 # compat aliases — the session-9 gradient is retired; primary actions are
 # flat accent now. Kept so no widget import breaks.
@@ -56,7 +61,7 @@ GREEN     = "#34D399"       # gains
 RED       = "#F87171"       # losses
 AMBER     = "#FBBF24"       # warnings
 
-HEADER_BG = "#0D1220"       # toolbar / menu bar / status bar
+HEADER_BG = "#0C1120"       # toolbar / sidebar / status bar
 HEADER_FG = "#C3CBDD"
 
 # Soft tinted backgrounds (row highlights, badges, callouts)

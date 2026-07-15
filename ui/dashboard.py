@@ -36,13 +36,83 @@ except Exception:
     HAS_MPL = False
 
 
+class _HeroArt(QWidget):
+    """Decorative right side of the hero banner — painted shapes only
+    (target mockup shows an abstract dial + beams), no image assets."""
+
+    def paintEvent(self, event):
+        from PyQt6.QtCore import QPointF
+        from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        # diagonal beams sweeping in from the right
+        p.setPen(Qt.PenStyle.NoPen)
+        for i, alpha in ((0, 16), (1, 10), (2, 6)):
+            x = w - 40 - i * 85
+            p.setBrush(QColor(255, 255, 255, alpha))
+            p.drawPolygon(QPolygonF([
+                QPointF(x, h), QPointF(x + 46, h),
+                QPointF(x + 120, -10), QPointF(x + 74, -10)]))
+        # big soft dial
+        cx, cy, r = w - 170, h * 0.55, 74
+        p.setBrush(QColor(148, 163, 184, 46))
+        p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
+        pen = QPen(QColor(230, 234, 243, 60))
+        pen.setWidthF(1.2)
+        p.setPen(pen)
+        p.drawLine(int(cx - r), int(cy), int(cx + r), int(cy))
+        p.drawLine(int(cx), int(cy - r), int(cx), int(cy + r))
+        p.setBrush(QColor(249, 115, 22, 200))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(int(cx - 3), int(cy - 3), 6, 6)
+        p.end()
+
+
+class _HeroBanner(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from ui.styles import (BORDER_SOFT, CHART_ACCENT, RADIUS,
+                               label_font)
+        self.setObjectName("Hero")
+        self.setFixedHeight(148)
+        self.setStyleSheet(f"""
+            QFrame#Hero {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #141C36, stop:0.55 #111A30, stop:1 #0D1526);
+                border: 1px solid {BORDER_SOFT};
+                border-radius: {RADIUS}px;
+            }}
+        """)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(28, 22, 20, 22)
+        col = QVBoxLayout()
+        col.setSpacing(8)
+        eyebrow = QLabel("PORTFOLIO OVERVIEW")
+        eyebrow.setFont(label_font())
+        eyebrow.setStyleSheet(f"color:{CHART_ACCENT}; font-size:8.5pt; "
+                              f"font-weight:600; border:none;")
+        col.addWidget(eyebrow)
+        headline = QLabel("Build Long-Term\nCompound Growth")
+        headline.setStyleSheet(f"color:{TEXT}; font-size:20pt; "
+                               f"font-weight:400; border:none;")
+        col.addWidget(headline)
+        col.addStretch()
+        row.addLayout(col)
+        row.addStretch()
+        art = _HeroArt()
+        art.setFixedWidth(360)
+        art.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        row.addWidget(art)
+
+
 def _pill_style(active: bool) -> str:
     """THE filter-pill style — every toggle row (portfolio, type, chart
     range) uses exactly this active/inactive pair."""
     from ui.styles import ACCENT_LITE, BORDER_SOFT, RADIUS_SM
     if active:
         return (f"QPushButton {{ background:{ACCENT_LITE}; color:{ACCENT}; "
-                f"border:1px solid rgba(108,127,242,0.45); "
+                f"border:1px solid rgba(59,130,246,0.45); "
                 f"border-radius:{RADIUS_SM}px; padding:4px 16px; "
                 f"font-weight:600; font-size:9pt; }}")
     return (f"QPushButton {{ background:transparent; color:{MUTED}; "
@@ -217,7 +287,8 @@ class DashboardTab(QWidget):
         sym         = _sym()
         all_cos     = models.get_all_companies()
 
-        # Portfolio filter bar (always shown)
+        # Hero banner (target design), then the type filter bar
+        self._layout.addWidget(_HeroBanner())
         self._layout.addWidget(self._filter_bar(all_cos))
 
         # Apply entity + type filters
