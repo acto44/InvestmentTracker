@@ -97,9 +97,15 @@ class MainWindow(QMainWindow):
             "Compare companies side by side")
         act("↻ Refresh", self._refresh_all, None,
             "Reload all data")
+        act("🕘 History", self._show_history, None,
+            "Read-only log of every change to companies, rounds and valuations")
         tb.addSeparator()
         act("⚙ Settings", self._open_settings, None,
             "Currency and backup preferences")
+
+    def _show_history(self):
+        from ui.history_dialog import HistoryDialog
+        HistoryDialog(self).exec()
 
     def _quick_add_company(self):
         from ui.dialogs import CompanyDialog

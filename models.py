@@ -1,7 +1,12 @@
+import json
 import sqlite3
 import os
 import shutil
-from datetime import date
+from datetime import date, datetime, timezone
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 def _base():
     if getattr(__import__('sys'), 'frozen', False):
@@ -33,8 +38,10 @@ def get_conn():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-def init_db():
-    conn = get_conn()
+def _init_schema_v1(conn):
+    """Schema as it was before versioned migrations existed (v1).
+    Kept callable on its own so migration tests can build a real v1
+    database through the actual code path."""
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS companies (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,15 +97,349 @@ def init_db():
             conn.commit()
         except Exception:
             pass
+
+
+# ── Versioned migrations (v2+) ────────────────────────────────────────────────
+# Every migration gets a pre-migration backup first (see backups.py) and
+# writes one 'migration' audit entry naming from/to version.
+
+def _has_column(conn, table, column) -> bool:
+    return column in {r[1] for r in conn.execute(f'PRAGMA table_info({table})')}
+
+
+def _migrate_v2(conn):
+    """Valuation history + audit trail; replaces companies.current_valuation."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS valuations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            round_id INTEGER REFERENCES funding_rounds(id) ON DELETE SET NULL,
+            as_of_date TEXT NOT NULL,
+            value REAL NOT NULL CHECK(value > 0),
+            source TEXT NOT NULL CHECK(source IN (
+                'round_post_money','internal_estimate','external_valuation',
+                'offer','exit','legacy_migration')),
+            note TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_valuations_company_date
+            ON valuations(company_id, as_of_date);
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_utc TEXT NOT NULL,
+            table_name TEXT NOT NULL,
+            row_id INTEGER,
+            company_id INTEGER,
+            action TEXT NOT NULL CHECK(action IN
+                ('insert','update','delete','migration')),
+            changes TEXT NOT NULL,
+            origin TEXT NOT NULL
+        );
+    """)
+    # Backfill: one honest row per company that had a value. No invented
+    # dates — as_of is the migration date and the note says so.
+    if _has_column(conn, 'companies', 'current_valuation'):
+        today = date.today().isoformat()
+        now = _utcnow()
+        for row in conn.execute(
+                "SELECT id, current_valuation FROM companies "
+                "WHERE current_valuation IS NOT NULL "
+                "AND current_valuation > 0").fetchall():
+            conn.execute(
+                "INSERT INTO valuations (company_id, as_of_date, value, "
+                "source, note, created_at) VALUES (?,?,?,?,?,?)",
+                (row['id'], today, row['current_valuation'],
+                 'legacy_migration',
+                 'carried over from single-value field; original as-of '
+                 'date unknown', now))
+        # single source of truth: drop the old column where SQLite allows
+        if sqlite3.sqlite_version_info >= (3, 35, 0):
+            conn.execute(
+                "ALTER TABLE companies DROP COLUMN current_valuation")
+
+
+MIGRATIONS = [(2, _migrate_v2)]
+SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
+
+
+def _run_versioned_migrations():
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key='schema_version'").fetchone()
+    current = int(row['value']) if row else 1
+    pending = [(v, fn) for v, fn in MIGRATIONS if v > current]
+    if not pending:
+        conn.close()
+        return
+
+    has_data = conn.execute(
+        "SELECT EXISTS(SELECT 1 FROM companies) "
+        "OR EXISTS(SELECT 1 FROM funding_rounds)").fetchone()[0]
+    conn.close()
+    if has_data:
+        import backups
+        backups.pre_migration_backup(current)
+
+    for target, fn in pending:
+        conn = get_conn()
+        try:
+            fn(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key,value) "
+                "VALUES ('schema_version', ?)", (str(target),))
+            conn.execute(
+                "INSERT INTO audit_log (ts_utc, table_name, row_id, "
+                "company_id, action, changes, origin) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (_utcnow(), 'schema', None, None, 'migration',
+                 json.dumps([{'field': 'schema_version',
+                              'old': str(target - 1),
+                              'new': str(target)}]),
+                 'migration'))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            conn.close()
+            raise
+        conn.close()
+
+
+def init_db():
+    conn = get_conn()
+    _init_schema_v1(conn)
+    conn.close()
+    _run_versioned_migrations()
+
+# ── Default audit origin ──────────────────────────────────────────────────────
+# Callers either pass origin=... per call, or wrap a whole flow with
+# @with_origin('excel_import') so every mutation inside is attributed.
+
+_DEFAULT_ORIGIN = 'app'
+
+
+def with_origin(name):
+    """Decorator: every model mutation inside runs with this audit origin
+    unless the call passes its own."""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            global _DEFAULT_ORIGIN
+            prev = _DEFAULT_ORIGIN
+            _DEFAULT_ORIGIN = name
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                _DEFAULT_ORIGIN = prev
+        return wrapper
+    return deco
+
+
+def _origin(origin):
+    return origin if origin and origin != 'app' else _DEFAULT_ORIGIN
+
+
+# ── Audit trail (append-only; see CLAUDE.md) ─────────────────────────────────
+# Every financially meaningful mutation writes its entry IN THE SAME
+# TRANSACTION as the change. There are deliberately no update/delete
+# functions for audit_log.
+
+_AUDIT_TRUNCATE = 500
+
+
+def _trunc(v):
+    s = v if isinstance(v, str) else v
+    if isinstance(s, str) and len(s) > _AUDIT_TRUNCATE:
+        return s[:_AUDIT_TRUNCATE] + '…[truncated]'
+    return v
+
+
+def _diff(old: dict, new: dict) -> list:
+    """[{field, old, new}] for fields that actually changed."""
+    out = []
+    for k, nv in new.items():
+        ov = old.get(k) if old else None
+        if ov != nv:
+            out.append({'field': k, 'old': _trunc(ov), 'new': _trunc(nv)})
+    return out
+
+
+def _audit(conn, table, row_id, action, changes, origin, company_id=None):
+    conn.execute(
+        "INSERT INTO audit_log (ts_utc, table_name, row_id, company_id, "
+        "action, changes, origin) VALUES (?,?,?,?,?,?,?)",
+        (_utcnow(), table, row_id, company_id, action,
+         json.dumps(changes, ensure_ascii=False), _origin(origin)))
+
+
+def get_audit_log(company_id=None, limit=500):
+    conn = get_conn()
+    if company_id is not None:
+        rows = conn.execute(
+            "SELECT * FROM audit_log WHERE company_id=? "
+            "ORDER BY id DESC LIMIT ?", (company_id, limit)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?",
+            (limit,)).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['changes'] = json.loads(d['changes'])
+        except Exception:
+            d['changes'] = []
+        out.append(d)
+    return out
+
+
+# ── Valuation history (single source of truth for current value) ─────────────
+
+VALUATION_SOURCES = ('round_post_money', 'internal_estimate',
+                     'external_valuation', 'offer', 'exit',
+                     'legacy_migration')
+
+_LATEST_VALUATION_SQL = (
+    "SELECT * FROM valuations WHERE company_id=? "
+    "ORDER BY as_of_date DESC, created_at DESC, id DESC LIMIT 1")
+
+
+def get_current_valuation(company_id):
+    """The row with the latest as_of_date (ties: latest created_at, then
+    id). This is THE way to obtain a company's current value."""
+    conn = get_conn()
+    row = conn.execute(_LATEST_VALUATION_SQL, (company_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_valuations(company_id):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM valuations WHERE company_id=? "
+        "ORDER BY as_of_date DESC, created_at DESC, id DESC",
+        (company_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_valuation_for_round(round_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM valuations WHERE round_id=?",
+                       (round_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_valuation(company_id, as_of_date, value, source, note='',
+                  round_id=None, origin='app'):
+    if source not in VALUATION_SOURCES:
+        raise ValueError(f'unknown valuation source: {source!r}')
+    conn = get_conn()
+    try:
+        c = conn.execute(
+            "INSERT INTO valuations (company_id, round_id, as_of_date, "
+            "value, source, note, created_at) VALUES (?,?,?,?,?,?,?)",
+            (company_id, round_id, as_of_date, value, source, note,
+             _utcnow()))
+        vid = c.lastrowid
+        _audit(conn, 'valuations', vid, 'insert',
+               _diff({}, {'as_of_date': as_of_date, 'value': value,
+                          'source': source, 'note': note,
+                          'round_id': round_id}),
+               origin, company_id=company_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+    return vid
+
+
+def update_valuation(valuation_id, origin='app', **kwargs):
+    if not kwargs:
+        return
+    if 'source' in kwargs and kwargs['source'] not in VALUATION_SOURCES:
+        raise ValueError(f"unknown valuation source: {kwargs['source']!r}")
+    conn = get_conn()
+    try:
+        old = conn.execute("SELECT * FROM valuations WHERE id=?",
+                           (valuation_id,)).fetchone()
+        if not old:
+            conn.close()
+            return
+        old = dict(old)
+        fields = ', '.join(f"{k}=?" for k in kwargs)
+        conn.execute(f"UPDATE valuations SET {fields} WHERE id=?",
+                     [*kwargs.values(), valuation_id])
+        changes = _diff(old, kwargs)
+        if changes:
+            _audit(conn, 'valuations', valuation_id, 'update', changes,
+                   origin, company_id=old['company_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     conn.close()
 
+
+def delete_valuation(valuation_id, origin='app'):
+    conn = get_conn()
+    try:
+        old = conn.execute("SELECT * FROM valuations WHERE id=?",
+                           (valuation_id,)).fetchone()
+        if not old:
+            conn.close()
+            return
+        old = dict(old)
+        conn.execute("DELETE FROM valuations WHERE id=?", (valuation_id,))
+        _audit(conn, 'valuations', valuation_id, 'delete',
+               [{'field': k, 'old': _trunc(v), 'new': None}
+                for k, v in old.items() if k != 'id' and v is not None],
+               origin, company_id=old['company_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+
+
 # ── Companies ────────────────────────────────────────────────────────────────
+
+_LATEST_PER_COMPANY_SQL = """
+    SELECT company_id, value, as_of_date, source FROM (
+        SELECT company_id, value, as_of_date, source,
+               ROW_NUMBER() OVER (PARTITION BY company_id
+                   ORDER BY as_of_date DESC, created_at DESC, id DESC) rn
+        FROM valuations) WHERE rn = 1
+"""
+
+
+def _attach_valuations(conn, companies: list):
+    """Populate c['current_valuation'] (+ as-of/source) from the valuation
+    history — the ONLY place the key is produced since the column was
+    dropped in schema v2."""
+    latest = {r['company_id']: r
+              for r in conn.execute(_LATEST_PER_COMPANY_SQL).fetchall()}
+    for c in companies:
+        v = latest.get(c['id'])
+        c['current_valuation'] = v['value'] if v else None
+        c['valuation_as_of'] = v['as_of_date'] if v else None
+        c['valuation_source'] = v['source'] if v else None
+    return companies
+
 
 def get_all_companies():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM companies ORDER BY entity, name").fetchall()
+    companies = _attach_valuations(conn, [dict(r) for r in rows])
     conn.close()
-    return [dict(r) for r in rows]
+    return companies
 
 def get_companies_by_entity():
     """Returns {entity_name: [company, ...]} sorted alphabetically."""
@@ -119,35 +460,93 @@ def get_entities():
 def get_company(company_id):
     conn = get_conn()
     row = conn.execute("SELECT * FROM companies WHERE id=?", (company_id,)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    company = _attach_valuations(conn, [dict(row)])[0]
     conn.close()
-    return dict(row) if row else None
+    return company
 
 def add_company(name, entity='', sector='', country='', first_investment_date='',
-                current_valuation=None, notes='', website='', description=''):
+                current_valuation=None, notes='', website='', description='',
+                origin='app'):
+    """current_valuation is a compatibility shim: it is recorded as a
+    valuation-history point (source 'internal_estimate', as of today) —
+    the companies table no longer has that column."""
     conn = get_conn()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO companies (name,entity,sector,country,first_investment_date,current_valuation,notes,website,description) VALUES (?,?,?,?,?,?,?,?,?)",
-        (name, entity, sector, country, first_investment_date, current_valuation, notes, website, description)
-    )
-    conn.commit()
-    cid = c.lastrowid
+    try:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO companies (name,entity,sector,country,first_investment_date,notes,website,description) VALUES (?,?,?,?,?,?,?,?)",
+            (name, entity, sector, country, first_investment_date, notes, website, description)
+        )
+        cid = c.lastrowid
+        _audit(conn, 'companies', cid, 'insert',
+               _diff({}, {'name': name, 'entity': entity, 'sector': sector,
+                          'country': country,
+                          'first_investment_date': first_investment_date,
+                          'notes': notes, 'website': website,
+                          'description': description}),
+               origin, company_id=cid)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     conn.close()
+    if current_valuation is not None and current_valuation > 0:
+        add_valuation(cid, date.today().isoformat(), current_valuation,
+                      'internal_estimate', note='initial valuation',
+                      origin=origin)
     return cid
 
-def update_company(company_id, **kwargs):
+def update_company(company_id, origin='app', **kwargs):
     if not kwargs:
         return
-    fields = ', '.join(f"{k}=?" for k in kwargs)
-    conn = get_conn()
-    conn.execute(f"UPDATE companies SET {fields} WHERE id=?", [*kwargs.values(), company_id])
-    conn.commit()
-    conn.close()
+    # compatibility shim: a current_valuation "edit" becomes a new
+    # valuation point — but only when the value actually changed
+    new_val = kwargs.pop('current_valuation', None)
+    if kwargs:
+        conn = get_conn()
+        try:
+            old = conn.execute("SELECT * FROM companies WHERE id=?",
+                               (company_id,)).fetchone()
+            old = dict(old) if old else {}
+            fields = ', '.join(f"{k}=?" for k in kwargs)
+            conn.execute(f"UPDATE companies SET {fields} WHERE id=?",
+                         [*kwargs.values(), company_id])
+            changes = _diff(old, kwargs)
+            if changes:
+                _audit(conn, 'companies', company_id, 'update', changes,
+                       origin, company_id=company_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            conn.close()
+            raise
+        conn.close()
+    if new_val is not None and new_val > 0:
+        latest = get_current_valuation(company_id)
+        if latest is None or abs(latest['value'] - new_val) > 1e-9:
+            add_valuation(company_id, date.today().isoformat(), new_val,
+                          'internal_estimate', note='value edited in app',
+                          origin=origin)
 
-def delete_company(company_id):
+def delete_company(company_id, origin='app'):
     conn = get_conn()
-    conn.execute("DELETE FROM companies WHERE id=?", (company_id,))
-    conn.commit()
+    try:
+        old = conn.execute("SELECT * FROM companies WHERE id=?",
+                           (company_id,)).fetchone()
+        name = dict(old).get('name') if old else None
+        conn.execute("DELETE FROM companies WHERE id=?", (company_id,))
+        _audit(conn, 'companies', company_id, 'delete',
+               [{'field': 'name', 'old': _trunc(name), 'new': None}],
+               origin, company_id=company_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     conn.close()
 
 # ── Rounds ───────────────────────────────────────────────────────────────────
@@ -169,50 +568,110 @@ def get_round(round_id):
 def add_round(company_id, round_name='', date='', amount_invested=None,
               pre_money_valuation=None, post_money_valuation=None,
               shares_received=None, price_per_share=None,
-              total_shares_outstanding=None, ownership_pct=None, status='Closed'):
+              total_shares_outstanding=None, ownership_pct=None,
+              status='Closed', origin='app'):
     if ownership_pct is None and shares_received and total_shares_outstanding:
         ownership_pct = (shares_received / total_shares_outstanding) * 100
+    fields = {'round_name': round_name, 'date': date,
+              'amount_invested': amount_invested,
+              'pre_money_valuation': pre_money_valuation,
+              'post_money_valuation': post_money_valuation,
+              'shares_received': shares_received,
+              'price_per_share': price_per_share,
+              'total_shares_outstanding': total_shares_outstanding,
+              'ownership_pct': ownership_pct, 'status': status}
     conn = get_conn()
-    c = conn.cursor()
-    c.execute(
-        """INSERT INTO funding_rounds
-           (company_id,round_name,date,amount_invested,pre_money_valuation,
-            post_money_valuation,shares_received,price_per_share,
-            total_shares_outstanding,ownership_pct,status)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-        (company_id, round_name, date, amount_invested, pre_money_valuation,
-         post_money_valuation, shares_received, price_per_share,
-         total_shares_outstanding, ownership_pct, status)
-    )
-    conn.commit()
-    rid = c.lastrowid
+    try:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO funding_rounds
+               (company_id,round_name,date,amount_invested,pre_money_valuation,
+                post_money_valuation,shares_received,price_per_share,
+                total_shares_outstanding,ownership_pct,status)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (company_id, round_name, date, amount_invested, pre_money_valuation,
+             post_money_valuation, shares_received, price_per_share,
+             total_shares_outstanding, ownership_pct, status)
+        )
+        rid = c.lastrowid
+        _audit(conn, 'funding_rounds', rid, 'insert',
+               _diff({}, {k: v for k, v in fields.items() if v not in (None, '')}),
+               origin, company_id=company_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     conn.close()
     return rid
 
-def update_round(round_id, **kwargs):
+def update_round(round_id, origin='app', **kwargs):
     if not kwargs:
         return
     sr = kwargs.get('shares_received')
     ts = kwargs.get('total_shares_outstanding')
     if sr and ts and 'ownership_pct' not in kwargs:
         kwargs['ownership_pct'] = (sr / ts) * 100
-    fields = ', '.join(f"{k}=?" for k in kwargs)
     conn = get_conn()
-    conn.execute(f"UPDATE funding_rounds SET {fields} WHERE id=?", [*kwargs.values(), round_id])
-    conn.commit()
+    try:
+        old = conn.execute("SELECT * FROM funding_rounds WHERE id=?",
+                           (round_id,)).fetchone()
+        if not old:
+            conn.close()
+            return
+        old = dict(old)
+        fields = ', '.join(f"{k}=?" for k in kwargs)
+        conn.execute(f"UPDATE funding_rounds SET {fields} WHERE id=?",
+                     [*kwargs.values(), round_id])
+        changes = _diff(old, kwargs)
+        if changes:
+            _audit(conn, 'funding_rounds', round_id, 'update', changes,
+                   origin, company_id=old['company_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     conn.close()
 
-def clear_rounds(company_id):
+def clear_rounds(company_id, origin='app'):
     """Delete all funding rounds for a company (used before re-importing year data)."""
     conn = get_conn()
-    conn.execute("DELETE FROM funding_rounds WHERE company_id=?", (company_id,))
-    conn.commit()
+    try:
+        n = conn.execute("SELECT COUNT(*) FROM funding_rounds WHERE company_id=?",
+                         (company_id,)).fetchone()[0]
+        conn.execute("DELETE FROM funding_rounds WHERE company_id=?", (company_id,))
+        if n:
+            _audit(conn, 'funding_rounds', None, 'delete',
+                   [{'field': 'rounds_deleted', 'old': n, 'new': None}],
+                   origin, company_id=company_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     conn.close()
 
-def delete_round(round_id):
+def delete_round(round_id, origin='app'):
     conn = get_conn()
-    conn.execute("DELETE FROM funding_rounds WHERE id=?", (round_id,))
-    conn.commit()
+    try:
+        old = conn.execute("SELECT * FROM funding_rounds WHERE id=?",
+                           (round_id,)).fetchone()
+        if not old:
+            conn.close()
+            return
+        old = dict(old)
+        conn.execute("DELETE FROM funding_rounds WHERE id=?", (round_id,))
+        _audit(conn, 'funding_rounds', round_id, 'delete',
+               [{'field': k, 'old': _trunc(v), 'new': None}
+                for k, v in old.items()
+                if k not in ('id', 'company_id') and v not in (None, '')],
+               origin, company_id=old['company_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     conn.close()
 
 # ── Documents ─────────────────────────────────────────────────────────────────

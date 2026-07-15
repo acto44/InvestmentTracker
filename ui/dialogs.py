@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QComboBox, QPushButton, QFileDialog, QMessageBox,
     QDialogButtonBox, QDoubleSpinBox, QDateEdit, QGroupBox, QScrollArea,
     QWidget, QRadioButton, QTableWidget, QTableWidgetItem, QFrame,
-    QSizePolicy, QSpacerItem
+    QSizePolicy, QSpacerItem, QCheckBox
 )
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QFont
@@ -347,11 +347,13 @@ class CompanyDialog(QDialog):
         )
 
         if self._cid:
-            models.update_company(self._cid, **company_data)
-            models.clear_rounds(self._cid)
+            models.update_company(self._cid, origin='ui.company_dialog',
+                                  **company_data)
+            models.clear_rounds(self._cid, origin='ui.company_dialog')
             cid = self._cid
         else:
-            cid = models.add_company(**company_data)
+            cid = models.add_company(origin='ui.company_dialog',
+                                     **company_data)
 
         for yr in sorted(year_amounts):
             models.add_round(
@@ -361,6 +363,7 @@ class CompanyDialog(QDialog):
                 amount_invested=year_amounts[yr],
                 ownership_pct=100.0,
                 status='Closed',
+                origin='ui.company_dialog',
             )
 
         self.accept()
@@ -414,6 +417,16 @@ class RoundDialog(QDialog):
         form.addRow("Amount Invested *", self.amount)
         form.addRow("Pre-Money Valuation", self.pre_money)
         form.addRow("Post-Money Valuation", self.post_money)
+
+        # a post-money value is a valuation point — record it in the
+        # valuation history unless the user opts out
+        self.record_val = QCheckBox(
+            "Also record a valuation point (source: round post-money)")
+        self.record_val.setChecked(True)
+        self.record_val.setEnabled(False)
+        self.post_money.valueChanged.connect(
+            lambda v: self.record_val.setEnabled(v > 0))
+        form.addRow("", self.record_val)
         form.addRow("Shares Received", self.shares)
         form.addRow("Price Per Share", self.pps)
         form.addRow("Total Shares Outstanding", self.total_shares)
@@ -476,6 +489,88 @@ class RoundDialog(QDialog):
             'total_shares_outstanding': ts or None,
             'ownership_pct':            own or None,
             'status':                   self.status.currentText(),
+            'record_valuation':         (self.record_val.isChecked()
+                                         and self.post_money.value() > 0),
+        }
+
+
+class ValuationDialog(QDialog):
+    """Add or edit one valuation-history point (see CLAUDE.md: the
+    valuation history is the single source of truth for current value)."""
+
+    SOURCES = ['internal_estimate', 'external_valuation', 'offer', 'exit',
+               'round_post_money']
+    SOURCE_LABELS = {
+        'internal_estimate': 'Internal estimate',
+        'external_valuation': 'External valuation',
+        'offer': 'Offer received',
+        'exit': 'Exit / sale',
+        'round_post_money': 'Round post-money',
+        'legacy_migration': 'Carried over (legacy)',
+    }
+
+    def __init__(self, parent=None, valuation=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit Valuation Point" if valuation
+                            else "Add Valuation Point")
+        self.setMinimumWidth(420)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self.date_edit = QDateEdit(QDate.currentDate())
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_edit.setCalendarPopup(True)
+        form.addRow("As-of date *", self.date_edit)
+
+        self.value_edit = QDoubleSpinBox()
+        self.value_edit.setRange(0, 1e12)
+        self.value_edit.setDecimals(0)
+        self.value_edit.setSingleStep(100_000)
+        self.value_edit.setGroupSeparatorShown(True)
+        form.addRow("Company valuation *", self.value_edit)
+
+        self.source_edit = QComboBox()
+        for s in self.SOURCES:
+            self.source_edit.addItem(self.SOURCE_LABELS[s], s)
+        form.addRow("Source", self.source_edit)
+
+        self.note_edit = QLineEdit()
+        self.note_edit.setPlaceholderText(
+            "e.g. term sheet from lead investor, board estimate…")
+        form.addRow("Note", self.note_edit)
+
+        layout.addLayout(form)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self._validate)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        if valuation:
+            if valuation.get('as_of_date'):
+                self.date_edit.setDate(QDate.fromString(
+                    valuation['as_of_date'][:10], "yyyy-MM-dd"))
+            self.value_edit.setValue(valuation.get('value') or 0)
+            idx = self.source_edit.findData(valuation.get('source'))
+            if idx >= 0:
+                self.source_edit.setCurrentIndex(idx)
+            self.note_edit.setText(valuation.get('note') or '')
+
+    def _validate(self):
+        if self.value_edit.value() <= 0:
+            QMessageBox.warning(self, "Invalid",
+                                "The valuation must be greater than zero.")
+            return
+        self.accept()
+
+    def get_data(self):
+        return {
+            'as_of_date': self.date_edit.date().toString("yyyy-MM-dd"),
+            'value': self.value_edit.value(),
+            'source': self.source_edit.currentData(),
+            'note': self.note_edit.text().strip(),
         }
 
 

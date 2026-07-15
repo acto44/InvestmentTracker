@@ -7,8 +7,15 @@ this code — the invariants below are not style preferences.
 ```
 main.py                  entry point: app icon (drawn in code), QSS, boot;
                          when frozen, chdir to the exe's folder
-models.py                SQLite layer: schema, migration pattern, CRUD,
-                         set_db_path()/get_db_path() (tests override this)
+models.py                SQLite layer: schema, versioned migration runner
+                         (MIGRATIONS list; auto pre-migration backup),
+                         audited CRUD (audit_log written in the same
+                         transaction), valuation history API
+                         (get_current_valuation is THE source of current
+                         value), set_db_path()/get_db_path()
+backups.py               SQLite backup-API copies: pre-migration (kept
+                         forever) + 24h routine (last 10 kept); backups/
+                         next to the DB, override via settings 'backup_dir'
 metrics.py               financial math: ROI, MOIC, annualised IRR
                          (Newton + bisection); keeps its own self-test
 excel_io.py              Excel import/export (openpyxl)
@@ -23,7 +30,8 @@ ui/tree_panel.py         entities → companies tree, filter, status dots
 ui/dashboard.py          portfolio KPIs, sector donut, charts (matplotlib)
 ui/detail_panel.py       per-company tabs: Overview / Rounds / Documents
 ui/quick_jump.py         Ctrl+K fuzzy company search
-ui/dialogs.py            add/edit company & round dialogs
+ui/dialogs.py            add/edit company, round & valuation dialogs
+ui/history_dialog.py     read-only audit-trail view (global + per company)
 ui/compare_dialog.py     side-by-side company comparison
 ui/import_dialog.py, ui/family_import_dialog.py, ui/family_edit_dialog.py
                          Excel import + entity management
@@ -48,20 +56,21 @@ pytest.ini               testpaths=tests — root-level scratch scripts
   dependency requires a written justification in the dependency register
   below before it is added. Dev-only dependencies (pytest etc.) are
   allowed but also registered.
-- **SCHEMA**: changes only via the existing migration pattern in
-  models.py — additive ALTERs wrapped individually so later ones run even
-  if earlier ones already ran. Copy this exactly:
+- **SCHEMA**: changes only via the versioned migration runner in
+  models.py — append a `(version, migration_fn)` pair to `MIGRATIONS`
+  and the runner backs up the database first, applies it, records a
+  'migration' audit entry and bumps settings.schema_version. Copy this
+  exactly:
   ```python
-  for sql in [
-      "ALTER TABLE companies ADD COLUMN entity TEXT DEFAULT ''",
-      "ALTER TABLE companies ADD COLUMN website TEXT DEFAULT ''",
-  ]:
-      try:
-          conn.execute(sql)
-          conn.commit()
-      except Exception:
-          pass
+  def _migrate_v3(conn):
+      conn.executescript("CREATE TABLE IF NOT EXISTS cashflows (...);")
+
+  MIGRATIONS = [(2, _migrate_v2), (3, _migrate_v3)]
   ```
+  (The pre-versioning additive-ALTER loop in `_init_schema_v1` is frozen
+  history — never extend it.) Every mutation of financial tables goes
+  through models.py functions so the audit trail stays complete; new
+  mutators must write their audit entry in the same transaction.
 - **MONEY**: amounts are stored as REAL; never compare floats for
   equality in tests (use pytest.approx); rounding happens only at display
   time through shared formatting helpers; every metric shown to the user
@@ -115,3 +124,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | date       | # | what changed                                          | migrations |
 |------------|---|-------------------------------------------------------|------------|
 | 2026-07-14 | 1 | CLAUDE.md constitution; repo hygiene guard test; pytest foundation (temp_db/demo_db fixtures, metrics under pytest, UI smoke via pytest-qt offscreen); models.set_db_path() override; seed_demo_data wrapped in seed() (script behavior unchanged); .gitignore extended (backups/, reports/, *.sqlite*) | none |
+| 2026-07-14 | 2 | Trustworthy data layer: backups.py (pre-migration via SQLite backup API + 24h routine, keep-10 rotation); valuation history replaces companies.current_valuation (honest legacy_migration backfill, column dropped, get_current_valuation + enriched company dicts keep all readers working); append-only audit trail written in-transaction by every mutator, with origins (ui.*, excel_import); round↔valuation link + ask-on-delete; Valuation block in Overview; read-only History view (toolbar + per company); metrics UNREALIZED_VALUE_FOOTNOTE | v2: valuations, audit_log, DROP companies.current_valuation |

@@ -19,6 +19,13 @@ def _parse_date(d) -> Optional[date]:
         return None
 
 
+# Footnote shown wherever unrealized value appears (CLAUDE.md: MONEY —
+# every metric must be able to state its assumptions). The value fed into
+# company_metrics comes from models.get_current_valuation().
+UNREALIZED_VALUE_FOOTNOTE = ("Current value = latest recorded valuation "
+                             "(as of {date}, source: {source}).")
+
+
 def roi(invested: float, current_value: float) -> Optional[float]:
     """Return on Investment as a percentage."""
     if not invested:

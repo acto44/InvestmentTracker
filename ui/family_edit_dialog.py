@@ -414,6 +414,7 @@ class FamilyEditDialog(QDialog):
 
     # ── Save to database ──────────────────────────────────────────────────────
 
+    @models.with_origin('ui.family_edit')
     def _commit(self) -> int:
         """Write current table state to DB. Returns number of companies saved."""
         rows = self._parse_table()

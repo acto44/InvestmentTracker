@@ -324,7 +324,7 @@ class TreePanel(QWidget):
             f"Delete '{c['name']}' and all its rounds and documents?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         ) == QMessageBox.StandardButton.Yes:
-            models.delete_company(cid)
+            models.delete_company(cid, origin='ui.tree_panel')
             self.refresh()
             self.selection_changed.emit("none", "0")
 
@@ -334,24 +334,59 @@ class TreePanel(QWidget):
         from ui.dialogs import RoundDialog
         dlg = RoundDialog(self)
         if dlg.exec():
-            models.add_round(cid, **dlg.get_data())
+            data = dlg.get_data()
+            record_val = data.pop('record_valuation', False)
+            rid = models.add_round(cid, origin='ui.round_dialog', **data)
+            if record_val and data.get('post_money_valuation'):
+                models.add_valuation(
+                    cid, data['date'], data['post_money_valuation'],
+                    'round_post_money',
+                    note=f"post-money of round '{data['round_name']}'",
+                    round_id=rid, origin='ui.round_dialog')
             self.refresh()
 
     def _edit_round(self, rid):
         from ui.dialogs import RoundDialog
-        dlg = RoundDialog(self, round_data=models.get_round(rid))
+        rd = models.get_round(rid)
+        dlg = RoundDialog(self, round_data=rd)
         if dlg.exec():
-            models.update_round(rid, **dlg.get_data())
+            data = dlg.get_data()
+            record_val = data.pop('record_valuation', False)
+            models.update_round(rid, origin='ui.round_dialog', **data)
+            linked = models.get_valuation_for_round(rid)
+            if record_val and data.get('post_money_valuation'):
+                if linked:
+                    models.update_valuation(
+                        linked['id'], origin='ui.round_dialog',
+                        as_of_date=data['date'],
+                        value=data['post_money_valuation'])
+                else:
+                    models.add_valuation(
+                        rd['company_id'], data['date'],
+                        data['post_money_valuation'], 'round_post_money',
+                        note=f"post-money of round '{data['round_name']}'",
+                        round_id=rid, origin='ui.round_dialog')
             self.refresh()
 
     def _delete_round(self, rid):
         if QMessageBox.question(
             self, "Delete Round", "Delete this funding round and its documents?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        ) == QMessageBox.StandardButton.Yes:
-            models.delete_round(rid)
-            self.refresh()
-            self.selection_changed.emit("none", "0")
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        linked = models.get_valuation_for_round(rid)
+        if linked:
+            also = QMessageBox.question(
+                self, "Linked valuation point",
+                "This round recorded a valuation point "
+                f"({linked['value']:,.0f} as of {linked['as_of_date']}).\n"
+                "Delete that valuation point too?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if also == QMessageBox.StandardButton.Yes:
+                models.delete_valuation(linked['id'], origin='ui.round_dialog')
+        models.delete_round(rid, origin='ui.round_dialog')
+        self.refresh()
+        self.selection_changed.emit("none", "0")
 
     # ── Document actions ──────────────────────────────────────────────────────
 

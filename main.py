@@ -62,6 +62,14 @@ def _make_app_icon() -> QIcon:
 def main():
     models.init_db()
 
+    # routine safety net: daily backup with rotation (see backups.py);
+    # pre-migration backups happen inside init_db's migration runner
+    try:
+        import backups
+        backups.routine_backup_if_due()
+    except Exception:
+        pass  # a failed backup must never block the app from opening
+
     # Give the process its own taskbar identity on Windows so the custom
     # icon shows in the taskbar instead of the generic Python icon.
     if sys.platform == 'win32':

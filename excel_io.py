@@ -117,6 +117,7 @@ def parse_excel(path: str) -> List[Dict[str, Any]]:
     return result
 
 
+@models.with_origin('excel_import')
 def import_rows(rows: List[Dict[str, Any]], on_conflict: str = 'update') -> None:
     """Write parsed rows to the database."""
     for row in rows:
@@ -650,6 +651,7 @@ def export_family_excel(path: str) -> None:
     wb.save(path)
 
 
+@models.with_origin('excel_import')
 def import_family_data(companies: List[Dict]) -> int:
     """
     Write parsed family-format data into the DB.

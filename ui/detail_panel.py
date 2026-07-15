@@ -377,25 +377,8 @@ class DetailPanel(QWidget):
                         "Compare to what we paid per share in each funding round below."))
         ov.addLayout(row)
 
-        # Valuation note
-        if c.get('current_valuation'):
-            note = QLabel(
-                f"Current company valuation: {_fmt(c['current_valuation'], sym)}  |  "
-                f"Our stake ({_pct(met['ownership'])}): {_fmt(met['current_value'], sym)}"
-            )
-            note.setStyleSheet(f"color:{MUTED}; font-size:9pt;")
-            ov.addWidget(note)
-        else:
-            hint = QLabel(
-                "ℹ  No current valuation set — value and return metrics show n/a.\n"
-                "Right-click the company in the tree → Edit Company to add one."
-            )
-            hint.setWordWrap(True)
-            hint.setStyleSheet(
-                f"background:{WARN_BG}; border:1px solid {WARN_BORDER}; border-radius:6px; "
-                f"padding:10px; color:{WARN_TEXT};"
-            )
-            ov.addWidget(hint)
+        # ── Valuation block: history is the single source of truth ────────
+        self._add_valuation_block(ov, c, met, sym)
 
         # Notes
         if c.get('notes'):
@@ -570,6 +553,140 @@ class DetailPanel(QWidget):
             subprocess.run(['xdg-open', path])
 
     # ── Rounds table ──────────────────────────────────────────────────────────
+
+    def _add_valuation_block(self, ov, c, met, sym):
+        """Current value with as-of/source + full history table with Δ%,
+        plus add/edit/delete — all through the valuation history."""
+        from ui.dialogs import ValuationDialog
+        cid = c['id']
+        ov.addWidget(SectionLabel("Valuation"))
+        history = models.get_valuations(cid)
+
+        if history:
+            cur = history[0]
+            label = ValuationDialog.SOURCE_LABELS.get(cur['source'],
+                                                      cur['source'])
+            note = QLabel(
+                f"Current company valuation: {_fmt(cur['value'], sym)}  |  "
+                f"Our stake ({_pct(met['ownership'])}): "
+                f"{_fmt(met['current_value'], sym)}")
+            note.setStyleSheet("font-size:10pt;")
+            ov.addWidget(note)
+            foot = QLabel(m.UNREALIZED_VALUE_FOOTNOTE.format(
+                date=cur['as_of_date'], source=label))
+            foot.setStyleSheet(f"color:{MUTED}; font-size:8.5pt;")
+            ov.addWidget(foot)
+
+            tbl = QTableWidget(len(history), 5)
+            tbl.setHorizontalHeaderLabels(
+                ["As of", "Value", "Source", "Note", "Δ% vs previous"])
+            tbl.verticalHeader().setVisible(False)
+            tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            tbl.setSelectionBehavior(
+                QTableWidget.SelectionBehavior.SelectRows)
+            for i, v in enumerate(history):
+                prev = history[i + 1] if i + 1 < len(history) else None
+                delta = ''
+                color = None
+                if prev and prev['value']:
+                    pct = (v['value'] - prev['value']) / prev['value'] * 100
+                    delta = f"{pct:+.1f}%"
+                    color = GREEN if pct >= 0 else RED
+                cells = [
+                    v['as_of_date'],
+                    _fmt(v['value'], sym),
+                    ValuationDialog.SOURCE_LABELS.get(v['source'],
+                                                      v['source']),
+                    v.get('note') or '',
+                    delta,
+                ]
+                for col, text in enumerate(cells):
+                    item = QTableWidgetItem(str(text))
+                    if col == 4 and color:
+                        item.setForeground(QColor(color))
+                    tbl.setItem(i, col, item)
+                tbl.item(i, 0).setData(Qt.ItemDataRole.UserRole, v['id'])
+            tbl.horizontalHeader().setSectionResizeMode(
+                3, QHeaderView.ResizeMode.Stretch)
+            tbl.setMaximumHeight(min(220, 60 + 30 * len(history)))
+            ov.addWidget(tbl)
+            self._val_table = tbl
+        else:
+            hint = QLabel(
+                "ℹ  No valuation recorded — value and return metrics show "
+                "n/a.\nAdd a valuation point below, or record one via a "
+                "round's post-money value.")
+            hint.setWordWrap(True)
+            hint.setStyleSheet(
+                f"background:{WARN_BG}; border:1px solid {WARN_BORDER}; "
+                f"border-radius:6px; padding:10px; color:{WARN_TEXT};")
+            ov.addWidget(hint)
+            self._val_table = None
+
+        btn_row = QHBoxLayout()
+        for text, slot in [
+                ("＋ Add valuation", lambda: self._add_valuation(cid)),
+                ("Edit selected", lambda: self._edit_valuation(cid)),
+                ("Delete selected", lambda: self._delete_valuation(cid)),
+                ("View history…", lambda: self._show_history(cid))]:
+            b = QPushButton(text)
+            b.setStyleSheet(_SOFT_BTN_QSS)
+            b.clicked.connect(slot)
+            btn_row.addWidget(b)
+        btn_row.addStretch()
+        ov.addLayout(btn_row)
+
+    def _selected_valuation_id(self):
+        tbl = getattr(self, '_val_table', None)
+        if tbl is None or tbl.currentRow() < 0:
+            return None
+        item = tbl.item(tbl.currentRow(), 0)
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _add_valuation(self, cid):
+        from ui.dialogs import ValuationDialog
+        dlg = ValuationDialog(self)
+        if dlg.exec():
+            d = dlg.get_data()
+            models.add_valuation(cid, d['as_of_date'], d['value'],
+                                 d['source'], note=d['note'],
+                                 origin='ui.valuation_dialog')
+            self.show_company(cid)
+
+    def _edit_valuation(self, cid):
+        vid = self._selected_valuation_id()
+        if vid is None:
+            QMessageBox.information(self, "No selection",
+                                    "Select a row in the valuation table first.")
+            return
+        from ui.dialogs import ValuationDialog
+        v = next((x for x in models.get_valuations(cid) if x['id'] == vid),
+                 None)
+        dlg = ValuationDialog(self, valuation=v)
+        if dlg.exec():
+            models.update_valuation(vid, origin='ui.valuation_dialog',
+                                    **dlg.get_data())
+            self.show_company(cid)
+
+    def _delete_valuation(self, cid):
+        vid = self._selected_valuation_id()
+        if vid is None:
+            QMessageBox.information(self, "No selection",
+                                    "Select a row in the valuation table first.")
+            return
+        if QMessageBox.question(
+                self, "Delete valuation point",
+                "Delete this valuation point? The change is recorded in "
+                "the history log.",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            models.delete_valuation(vid, origin='ui.valuation_dialog')
+            self.show_company(cid)
+
+    def _show_history(self, cid):
+        from ui.history_dialog import HistoryDialog
+        HistoryDialog(self, company_id=cid).exec()
 
     def _add_rounds_table(self, rounds, sym, target=None):
         headers = ["Round", "Date", "Invested", "Pre-Money", "Post-Money",

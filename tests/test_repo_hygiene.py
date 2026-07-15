@@ -48,11 +48,38 @@ def _find_git() -> str:
                 'verify the repo state (install git or GitHub Desktop)')
 
 
+def _tracked_from_git_index() -> list:
+    """Read tracked paths straight out of .git/index (format v2/v3) —
+    no subprocess, so the guard works even when process spawning is
+    flaky on this machine. Read-only."""
+    import struct
+    path = os.path.join(ROOT, '.git', 'index')
+    with open(path, 'rb') as f:
+        data = f.read()
+    sig, version, count = struct.unpack('>4sLL', data[:12])
+    assert sig == b'DIRC', 'not a git index file'
+    assert version in (2, 3), f'unsupported git index version {version}'
+    out = []
+    pos = 12
+    for _ in range(count):
+        entry_start = pos
+        flags = struct.unpack('>H', data[pos + 60:pos + 62])[0]
+        name_len = flags & 0x0FFF
+        name_pos = pos + 62 + (2 if version == 3 and flags & 0x4000 else 0)
+        name = data[name_pos:name_pos + name_len].decode('utf-8',
+                                                         'replace')
+        out.append(name)
+        entry_len = (name_pos - entry_start) + name_len
+        pos = entry_start + ((entry_len + 8) // 8) * 8  # NUL-padded to 8
+    return out
+
+
 def _tracked_files() -> list:
-    # this machine occasionally refuses process spawns transiently
-    # (antivirus); the guard must be reliable, so retry a few times
+    # this machine occasionally refuses process spawns transiently;
+    # try git itself first, then fall back to reading .git/index directly
+    # — the privacy guard must never be skippable by a flaky spawn
     last_err = None
-    for attempt in range(4):
+    for attempt in range(3):
         try:
             r = subprocess.run([_find_git(), 'ls-files'], cwd=ROOT,
                                capture_output=True, text=True,
@@ -62,7 +89,11 @@ def _tracked_files() -> list:
         except OSError as e:
             last_err = e
             time.sleep(0.2 * (attempt + 1))
-    pytest.fail(f'could not run git ls-files after retries: {last_err!r}')
+    try:
+        return _tracked_from_git_index()
+    except Exception as e:
+        pytest.fail('could not list tracked files: git spawn failed '
+                    f'({last_err!r}) and index read failed ({e!r})')
 
 
 def test_no_real_data_is_tracked():
