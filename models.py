@@ -1184,6 +1184,15 @@ def set_setting(key, value):
     conn.commit()
     conn.close()
 
+def audit_summary():
+    """Read-only: (total audit entries, latest ts_utc or None) — feeds
+    the sidebar History badge and the 'Last update' footer line."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*), MAX(ts_utc) FROM audit_log").fetchone()
+    conn.close()
+    return int(row[0]), row[1]
+
 def log_ai_activity(provider, model, task_id, payload_chars, outcome):
     """One row per AI attempt. Only metadata — the payload body is never
     stored (see _migrate_v5). outcome is CHECK-constrained by the schema."""

@@ -95,6 +95,91 @@ QWidget {{
     color: {TEXT};
 }}
 QLabel {{ background: transparent; }}
+/* ── Left navigation rail (the app shell, session 11) ── */
+QFrame#NavRail {{
+    background: {HEADER_BG};
+    border-right: 1px solid {BORDER_SOFT};
+}}
+QLabel#RailBrand {{
+    color: {TEXT};
+    font-size: 11pt;
+    font-weight: 700;
+    padding: 4px 6px;
+}}
+QLabel#RailSection {{
+    color: {FAINT};
+    font-size: 8pt;
+    font-weight: 600;
+    padding: 2px 6px;
+}}
+QPushButton#RailBtn {{
+    background: transparent;
+    color: {HEADER_FG};
+    border: none;
+    border-radius: {RADIUS_SM}px;
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 10pt;
+}}
+QPushButton#RailBtn:hover   {{ background: {HOVER}; color: {TEXT}; }}
+QPushButton#RailBtn:pressed {{ background: {HOVER}; }}
+QPushButton#RailBtn:checked {{ background: {ACCENT_LITE}; color: {ACCENT}; }}
+QLabel#RailLogo {{
+    background: {ACCENT};
+    color: #FFFFFF;
+    border-radius: 8px;
+    font-size: 13pt;
+    font-weight: 700;
+}}
+QLabel#RailBadge {{
+    background: {ACCENT_LITE};
+    color: {ACCENT};
+    border-radius: 8px;
+    padding: 1px 8px;
+    font-size: 8pt;
+    font-weight: 700;
+}}
+QLabel#RailMeta {{
+    color: {FAINT};
+    font-size: 8pt;
+    padding-left: 4px;
+}}
+QComboBox#RailCombo {{
+    background: {CARD};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: {RADIUS_SM}px;
+    padding: 8px 10px;
+    font-weight: 600;
+    font-size: 9pt;
+}}
+/* ── Top bar widgets ── */
+QLineEdit#GlobalSearch {{
+    background: {CARD};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 9.5pt;
+}}
+QLineEdit#GlobalSearch:focus {{ border-color: {ACCENT}; }}
+QPushButton#TopBtn {{
+    background: {CARD};
+    color: {TEXT};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: {RADIUS_SM}px;
+    padding: 8px 14px;
+    font-weight: 600;
+    font-size: 9.5pt;
+}}
+QPushButton#TopBtn:hover {{ background: {HOVER}; }}
+QPushButton#TopBtn::menu-indicator {{ width: 0; }}
+/* the main content stack sits flush against the rail — no pane chrome */
+QTabWidget#MainStack::pane {{
+    border: none;
+    border-radius: 0;
+    top: 0;
+    padding: 0;
+}}
 /* ── Tabs: segmented pills ── */
 QTabWidget {{ background: transparent; }}
 QTabBar {{ background: transparent; border: none; }}

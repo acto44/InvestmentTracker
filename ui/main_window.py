@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QSplitter,
-    QTabWidget, QFileDialog, QMessageBox, QToolBar
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
+    QTabWidget, QFileDialog, QMessageBox, QToolBar, QFrame, QLabel,
+    QPushButton
 )
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QAction, QKeySequence
@@ -19,100 +20,120 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Investment Tracker")
         self.setMinimumSize(1100, 700)
         self.resize(1320, 820)
-        self._build_menu()
-        self._build_toolbar()
+        self._build_topbar()
         self._build_ui()
+        self._ai_action = None
+        self._ai_rail_btn = None
+        self._refresh_ai_affordances()
+        self._build_shortcuts()
         self._restore_state()
         sb = self.statusBar()
         if sb:
             sb.showMessage(
-                "Ready — Ctrl+N adds a company, Ctrl+K jumps to one, "
-                "or use the toolbar above.")
+                "Ready — Ctrl+N adds a company, Ctrl+K searches, "
+                "navigation is in the sidebar.")
 
-    # ── Menu ──────────────────────────────────────────────────────────────────
+    # ── Global shortcuts (survived the menu bar's removal) ────────────────────
 
-    def _build_menu(self):
-        mb = self.menuBar()
+    def _build_shortcuts(self):
+        for text, seq, slot in (
+                ("Add Company", "Ctrl+N", self._quick_add_company),
+                ("Go to Company", "Ctrl+K", self._quick_jump),
+                ("Refresh", "Ctrl+R", self._refresh_all),
+                ("Preferences", "Ctrl+,", self._open_settings)):
+            a = QAction(text, self)
+            a.setShortcut(QKeySequence(seq))
+            a.triggered.connect(slot)
+            self.addAction(a)
 
-        file_m = mb.addMenu("File")
-        file_m.addAction("Edit Family Data…",               self._edit_family)
-        file_m.addSeparator()
-        file_m.addAction("Import from family spreadsheet…", self._import_family)
-        file_m.addAction("Re-sync from family spreadsheet…",self._resync_family)
-        file_m.addSeparator()
-        file_m.addAction("Export family format (Excel)…",   self._export_family_excel)
-        file_m.addAction("Import standard Excel…",          self._import_excel)
-        file_m.addAction("Export standard Excel…",          self._export_excel)
-        file_m.addSeparator()
-        file_m.addAction("Export backup (FamiljeInvesteringar)…", self._export_backup)
-        file_m.addAction("Import backup…",                 self._import_backup)
-        file_m.addSeparator()
-        file_m.addAction("Exit",                            self.close)
+    # ── Top bar: global search + primary actions ──────────────────────────────
 
-        view_m = mb.addMenu("View")
-        act_refresh = view_m.addAction("Refresh",  self._refresh_all)
-        act_refresh.setShortcut(QKeySequence("Ctrl+R"))
-        act_jump = view_m.addAction("Go to Company…", self._quick_jump)
-        act_jump.setShortcut(QKeySequence("Ctrl+K"))
-        view_m.addSeparator()
-        view_m.addAction("Compare Companies…",     self._compare_companies)
-
-        settings_m = mb.addMenu("Settings")
-        act_prefs = settings_m.addAction("Preferences…", self._open_settings)
-        act_prefs.setShortcut(QKeySequence("Ctrl+,"))
-
-        help_m = mb.addMenu("Help")
-        help_m.addAction("How metrics are calculated…", self._metrics_help)
-        help_m.addAction("About",                  self._about)
-
-    # ── Toolbar ───────────────────────────────────────────────────────────────
-
-    def _build_toolbar(self):
+    def _build_topbar(self):
+        from PyQt6.QtWidgets import QLineEdit, QMenu, QSizePolicy
         tb = QToolBar("Main")
         tb.setMovable(False)
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(tb)
 
-        def act(text, slot, shortcut=None, tip=None):
-            a = QAction(text, self)
-            a.triggered.connect(slot)
-            if shortcut:
-                a.setShortcut(QKeySequence(shortcut))
-            if tip:
-                a.setToolTip(tip + (f"  ({shortcut})" if shortcut else ""))
-            tb.addAction(a)
-            return a
+        self._search = QLineEdit()
+        self._search.setObjectName("GlobalSearch")
+        self._search.setPlaceholderText(
+            "Search companies, sectors…   (Ctrl+K)")
+        self._search.setFixedWidth(340)
+        self._search.setClearButtonEnabled(True)
+        self._search.textEdited.connect(self._search_typed)
+        tb.addWidget(self._search)
 
-        act("＋ Add Company", self._quick_add_company, "Ctrl+N",
-            "Add a new company to the portfolio")
-        act("🔍 Go to…", self._quick_jump, "Ctrl+K",
-            "Jump straight to a company")
-        tb.addSeparator()
-        act("⬇ Import", self._import_family, None,
-            "Import from the family spreadsheet")
-        act("⬆ Export", self._export_family_excel, None,
-            "Export the family-format Excel file")
-        tb.addSeparator()
-        act("⇄ Compare", self._compare_companies, None,
-            "Compare companies side by side")
-        act("↻ Refresh", self._refresh_all, None,
-            "Reload all data")
-        act("🕘 History", self._show_history, None,
-            "Read-only log of every change to companies, rounds and valuations")
-        act("📄 Reports…", self._report_center, None,
-            "Report Center — company, portfolio and entity reports, "
-            "single or in batches")
-        tb.addSeparator()
-        act("⚙ Settings", self._open_settings, None,
-            "Currency and backup preferences")
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding,
+                             QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+
+        def top_btn(text, slot=None, menu=None, primary=False, tip=None):
+            b = QPushButton(text)
+            if not primary:
+                b.setObjectName("TopBtn")
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tip:
+                b.setToolTip(tip)
+            if menu is not None:
+                b.setMenu(menu)
+            if slot is not None:
+                b.clicked.connect(slot)
+            tb.addWidget(b)
+            return b
+
+        top_btn("＋  Add Company", self._quick_add_company, primary=True,
+                tip="Add a new company to the portfolio  (Ctrl+N)")
+
+        imp = QMenu(self)
+        imp.addAction("Import from family spreadsheet…",
+                      self._import_family)
+        imp.addAction("Re-sync from family spreadsheet…",
+                      self._resync_family)
+        imp.addAction("Import standard Excel…", self._import_excel)
+        imp.addSeparator()
+        imp.addAction("Import backup…", self._import_backup)
+        imp.addSeparator()
+        imp.addAction("Edit Family Data…", self._edit_family)
+        top_btn("⬇  Import", menu=imp)
+
+        exp = QMenu(self)
+        exp.addAction("Export family format (Excel)…",
+                      self._export_family_excel)
+        exp.addAction("Export standard Excel…", self._export_excel)
+        exp.addSeparator()
+        exp.addAction("Export backup (FamiljeInvesteringar)…",
+                      self._export_backup)
+        top_btn("⬆  Export", menu=exp)
+
+        top_btn("↻  Refresh", self._refresh_all,
+                tip="Reload all data  (Ctrl+R)")
+
+        help_m = QMenu(self)
+        help_m.addAction("How metrics are calculated…", self._metrics_help)
+        help_m.addAction("About", self._about)
+        top_btn(" ? ", menu=help_m, tip="Help")
         self._toolbar = tb
-        self._ai_action = None
-        self._refresh_ai_affordances()
+
+    def _search_typed(self, text):
+        """The global search box hands off to the existing Ctrl+K
+        palette, seeded with what was typed."""
+        if not text.strip():
+            return
+        self._search.blockSignals(True)
+        self._search.clear()
+        self._search.blockSignals(False)
+        from ui.quick_jump import QuickJumpDialog
+        dlg = QuickJumpDialog(self, initial=text)
+        if dlg.exec() and dlg.selected_company_id is not None:
+            self.tabs.setCurrentIndex(1)
+            self.tree.select_company(dlg.selected_company_id)
 
     def _refresh_ai_affordances(self):
-        """The Ask-AI action EXISTS only while the master switch is on
+        """The Ask-AI entry EXISTS only while the master switch is on
         (CLAUDE.md: AI) — created/removed here, re-checked after the
-        settings dialog closes."""
+        settings dialog closes. The QAction is the stable programmatic
+        surface (shortcuts, tests); the rail button triggers it."""
         import ai
         enabled = ai.is_ai_enabled()
         if enabled and self._ai_action is None:
@@ -120,13 +141,22 @@ class MainWindow(QMainWindow):
             a.triggered.connect(self._ask_ai)
             a.setToolTip("Ask questions about the portfolio — "
                          "per-question consent, session-only")
-            self._toolbar.addAction(a)
+            self.addAction(a)
             self._ai_action = a
+            b = QPushButton("✦  Ask AI")
+            b.setObjectName("RailBtn")
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(a.trigger)
+            self._rail_layout.insertWidget(self._rail_ai_index, b)
+            self._ai_rail_btn = b
         elif not enabled and self._ai_action is not None:
-            self._toolbar.removeAction(self._ai_action)
+            self.removeAction(self._ai_action)
             self._ai_action.setParent(None)
             self._ai_action.deleteLater()
             self._ai_action = None
+            self._ai_rail_btn.setParent(None)
+            self._ai_rail_btn.deleteLater()
+            self._ai_rail_btn = None
 
     def _ask_ai(self):
         from ui.ai_qa import AskAIDialog
@@ -189,9 +219,20 @@ class MainWindow(QMainWindow):
     # ── UI ────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
+        """App shell (session 11): persistent left navigation rail +
+        content stack. self.tabs stays a QTabWidget (hidden tab bar) so
+        every existing caller/test keeps working — the rail drives it."""
+        shell = QWidget()
+        shell_lay = QHBoxLayout(shell)
+        shell_lay.setContentsMargins(0, 0, 0, 0)
+        shell_lay.setSpacing(0)
+        shell_lay.addWidget(self._build_rail())
+
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("MainStack")
         self.tabs.setDocumentMode(True)
-        self.setCentralWidget(self.tabs)
+        shell_lay.addWidget(self.tabs, 1)
+        self.setCentralWidget(shell)
 
         # Dashboard tab
         self.dashboard = DashboardTab()
@@ -220,14 +261,133 @@ class MainWindow(QMainWindow):
         p_layout.addWidget(splitter)
         self.tabs.addTab(portfolio, "  Portfolio  ")
 
+        # Companies + Transactions pages (session 11 shell — read-only
+        # compositions of existing data)
+        from ui.companies_page import CompaniesPage
+        from ui.transactions_page import TransactionsPage
+        self.companies_page = CompaniesPage()
+        self.companies_page.open_company.connect(self._open_company)
+        self.tabs.addTab(self.companies_page, "  Companies  ")
+        self.transactions_page = TransactionsPage()
+        self.tabs.addTab(self.transactions_page, "  Transactions  ")
+
         self.tabs.currentChanged.connect(self._on_tab)
+        self.tabs.currentChanged.connect(self._sync_rail)
+        # hide AFTER the tabs exist — QTabWidget re-shows the bar when
+        # the first tab is added, so hiding earlier does not stick
+        bar = self.tabs.tabBar()
+        if bar:
+            bar.hide()
         self.dashboard.refresh()
+
+    def _open_company(self, cid: int):
+        self.tabs.setCurrentIndex(1)
+        self.tree.select_company(cid)
+
+    def _build_rail(self):
+        from PyQt6.QtWidgets import QComboBox, QHBoxLayout as HB
+        from version import APP_VERSION
+        rail = QFrame()
+        rail.setObjectName("NavRail")
+        rail.setFixedWidth(230)
+        lay = QVBoxLayout(rail)
+        lay.setContentsMargins(12, 16, 12, 14)
+        lay.setSpacing(4)
+        self._rail_layout = lay
+
+        brand_row = HB()
+        brand_row.setSpacing(10)
+        logo = QLabel("↗")
+        logo.setObjectName("RailLogo")
+        logo.setFixedSize(32, 32)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand_row.addWidget(logo)
+        brand = QLabel("Investment Tracker")
+        brand.setObjectName("RailBrand")
+        brand_row.addWidget(brand, 1)
+        lay.addLayout(brand_row)
+        lay.addSpacing(20)
+
+        def rail_btn(text, slot, checkable=False):
+            b = QPushButton(text)
+            b.setObjectName("RailBtn")
+            b.setCheckable(checkable)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(slot)
+            lay.addWidget(b)
+            return b
+
+        self._nav_buttons = {}
+        for idx, (icon, label) in enumerate((
+                ("📊", "Dashboard"), ("💼", "Portfolio"),
+                ("🏢", "Companies"), ("🔁", "Transactions"))):
+            self._nav_buttons[idx] = rail_btn(
+                f"{icon}  {label}",
+                lambda _=False, i=idx: self.tabs.setCurrentIndex(i),
+                checkable=True)
+        self._nav_buttons[0].setChecked(True)
+
+        n_events, last_ts = models.audit_summary()
+        hist = rail_btn("🕘  History", self._show_history)
+        badge = QLabel(f"{n_events:,}")
+        badge.setObjectName("RailBadge")
+        hb = HB(hist)
+        hb.setContentsMargins(0, 0, 10, 0)
+        hb.addStretch()
+        hb.addWidget(badge)
+        self._history_badge = badge
+
+        rail_btn("📄  Reports", self._report_center)
+        rail_btn("⇄  Compare", self._compare_companies)
+        self._rail_ai_index = lay.count()   # Ask AI slot (when enabled)
+        lay.addStretch()
+        rail_btn("⚙  Settings", self._open_settings)
+
+        lay.addSpacing(8)
+        self._portfolio_combo = QComboBox()
+        self._portfolio_combo.setObjectName("RailCombo")
+        self._portfolio_combo.addItem("All portfolios", None)
+        for e in models.get_entities():
+            self._portfolio_combo.addItem(e, e)
+        self._portfolio_combo.currentIndexChanged.connect(
+            self._on_portfolio_pick)
+        lay.addWidget(self._portfolio_combo)
+
+        status_row = HB()
+        status_row.setSpacing(6)
+        dot = QLabel("●")
+        dot.setStyleSheet("color:#34D399; font-size:8pt;")
+        status_row.addWidget(dot)
+        ts = (last_ts or '').replace('T', ' ')[:16]
+        self._last_update_lbl = QLabel(
+            f"Last update {ts}" if ts else "No changes recorded yet")
+        self._last_update_lbl.setObjectName("RailMeta")
+        status_row.addWidget(self._last_update_lbl, 1)
+        lay.addLayout(status_row)
+        ver = QLabel(f"v{APP_VERSION}")
+        ver.setObjectName("RailMeta")
+        lay.addWidget(ver)
+        return rail
+
+    def _on_portfolio_pick(self, idx):
+        """Sidebar portfolio dropdown — the exact same filtering path
+        the old dashboard entity pills used."""
+        self.dashboard._set_filter(self._portfolio_combo.itemData(idx))
+        self.tabs.setCurrentIndex(0)
+
+    def _sync_rail(self, idx):
+        for i, b in self._nav_buttons.items():
+            b.setChecked(i == idx)
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 
     def _on_tab(self, idx):
         if idx == 0:
             self.dashboard.refresh()
+        elif idx == 2:
+            self.companies_page.refresh()
+        elif idx == 3:
+            self.transactions_page.refresh()
 
     def _on_select(self, ntype, nkey):
         if ntype == NODE_ENTITY:
@@ -244,6 +404,11 @@ class MainWindow(QMainWindow):
     def _refresh_all(self):
         self.tree.refresh()
         self.dashboard.refresh()
+        n_events, last_ts = models.audit_summary()
+        self._history_badge.setText(f"{n_events:,}")
+        ts = (last_ts or '').replace('T', ' ')[:16]
+        if ts:
+            self._last_update_lbl.setText(f"Last update {ts}")
 
     def _compare_companies(self):
         from ui.compare_dialog import CompareDialog

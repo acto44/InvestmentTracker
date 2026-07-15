@@ -20,6 +20,20 @@ import models  # noqa: E402
 import seed_demo_data  # noqa: E402
 
 
+@pytest.fixture(scope='session', autouse=True)
+def isolated_qsettings(tmp_path_factory):
+    """Tests must NEVER write the user's real QSettings (registry).
+    MainWindow.closeEvent persists window geometry/splitter state — test
+    windows closing headless were saving a collapsed side panel into the
+    owner's registry (found the hard way). Route ALL QSettings to a
+    throwaway ini directory instead."""
+    from PyQt6.QtCore import QSettings
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat,
+                      QSettings.Scope.UserScope,
+                      str(tmp_path_factory.mktemp('qsettings')))
+
+
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     """INVARIANT (CLAUDE.md: AI): the suite must be INCAPABLE of calling

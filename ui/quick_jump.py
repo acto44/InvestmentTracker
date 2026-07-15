@@ -13,14 +13,17 @@ class QuickJumpDialog(QDialog):
     After exec() returns Accepted, `selected_company_id` holds the choice.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial: str = ''):
         super().__init__(parent)
         self.selected_company_id: int | None = None
         self.setWindowTitle("Go to company")
         self.setModal(True)
         self.setMinimumWidth(420)
         self._build()
-        self._populate('')
+        if initial:
+            self._search.setText(initial)   # textChanged → _populate
+        else:
+            self._populate('')
 
     def _build(self):
         lay = QVBoxLayout(self)

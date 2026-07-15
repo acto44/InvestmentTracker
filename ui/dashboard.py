@@ -97,7 +97,8 @@ class _Card(QFrame):
 
         v = QLabel(str(value))
         # size via stylesheet — the app-wide QSS font-size wins over QFont
-        v.setStyleSheet(f"font-size:18pt; font-weight:600; "
+        # (16pt: six cards must fit beside the 230px rail at min width)
+        v.setStyleSheet(f"font-size:16pt; font-weight:600; "
                         f"color:{value_color or TEXT}; border:none;")
         lay.addWidget(v)
 
@@ -735,20 +736,9 @@ class DashboardTab(QWidget):
 
         _btn_style = _pill_style
 
-        # Row 1: entity filter
-        entity_row = QHBoxLayout()
-        entity_row.setSpacing(6)
-        entities = sorted({c.get('entity') or 'Unassigned' for c in all_companies})
-        for label, value in [("All Portfolios", None)] + [(e, e) for e in entities]:
-            btn = QPushButton(label)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet(_btn_style(self._entity_filter == value))
-            btn.clicked.connect(lambda _, v=value: self._set_filter(v))
-            entity_row.addWidget(btn)
-        entity_row.addStretch()
-        lay.addLayout(entity_row)
-
-        # Row 2: investment type filter (only shown if any types are set)
+        # The entity filter lives in the sidebar dropdown since the
+        # session-11 shell (same _set_filter path the pills used).
+        # Row: investment type filter (only shown if any types are set)
         types = sorted({c.get('investment_type') for c in all_companies
                         if c.get('investment_type')})
         if types:
