@@ -2,8 +2,18 @@
 investments.db
 *.db
 
+# Other database formats — same privacy rule as *.db
+*.sqlite
+*.sqlite3
+
 # Uploaded documents folder
 documents/
+
+# Database backups — real data
+backups/
+
+# Generated reports — contain real financial figures
+reports/
 
 # Excel files — may contain personal/financial data
 *.xlsx

@@ -1,0 +1,3 @@
+# dev-only dependencies — see the register in CLAUDE.md
+pytest>=8.0
+pytest-qt>=4.4

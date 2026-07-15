@@ -8,7 +8,18 @@ def _base():
         return os.path.dirname(__import__('sys').executable)
     return os.path.dirname(os.path.abspath(__file__))
 
+# Tests point the whole app at a throwaway database through this override —
+# fixtures must NEVER touch the real investments.db (see CLAUDE.md: PRIVACY).
+_DB_PATH_OVERRIDE = None
+
+def set_db_path(path):
+    """Override where the database lives (None = back to the default)."""
+    global _DB_PATH_OVERRIDE
+    _DB_PATH_OVERRIDE = path
+
 def get_db_path():
+    if _DB_PATH_OVERRIDE:
+        return _DB_PATH_OVERRIDE
     return os.path.join(_base(), "investments.db")
 
 def get_docs_dir():
