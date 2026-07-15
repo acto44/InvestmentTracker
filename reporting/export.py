@@ -13,9 +13,12 @@ import re
 from datetime import date
 
 import formatting as F
-from reporting.builder import build_company_report_model
-from reporting.charts import build_company_chart_images
-from reporting.render import render_report_html
+from reporting.builder import (build_company_report_model,
+                               build_portfolio_report_model)
+from reporting.charts import (build_company_chart_images,
+                              build_portfolio_chart_images)
+from reporting.render import (render_portfolio_report_html,
+                              render_report_html)
 
 
 def report_filename(company_name: str, as_of: date, ext: str) -> str:
@@ -61,6 +64,61 @@ def write_pdf(path: str, html: str, images: dict) -> str:
     printer.setPageLayout(layout)
     doc.print(printer)
     return path
+
+
+def generate_portfolio_report(scope: str | None = None,
+                              as_of: date | None = None,
+                              compare_to: date | None = None,
+                              sections=None, formats=('html',),
+                              out_dir: str = '.') -> list:
+    """Portfolio (scope=None) or entity (scope='<name>') report."""
+    as_of = as_of or date.today()
+    model = build_portfolio_report_model(scope, as_of, compare_to)
+    images = build_portfolio_chart_images(model)
+    html = render_portfolio_report_html(model, images, sections)
+    os.makedirs(out_dir, exist_ok=True)
+    stem = (f'Entity_{F.sanitize_filename(scope)}' if scope
+            else 'Portfolio')
+    written = []
+    if 'html' in formats:
+        p = os.path.join(out_dir, f'{stem}_{as_of.isoformat()}.html')
+        written.append(write_html(p, html, images))
+    if 'pdf' in formats:
+        p = os.path.join(out_dir, f'{stem}_{as_of.isoformat()}.pdf')
+        written.append(write_pdf(p, html, images))
+    return written
+
+
+def generate_all_company_reports(as_of=None, formats=('pdf',),
+                                 out_dir='.', progress=None) -> list:
+    """Batch: one report per company. progress(i, total, name) optional."""
+    import models
+    companies = models.get_all_companies()
+    written = []
+    for i, c in enumerate(companies, 1):
+        if progress:
+            progress(i, len(companies), c['name'])
+        written.extend(generate_company_report(
+            c['id'], as_of=as_of, formats=formats, out_dir=out_dir))
+    return written
+
+
+def generate_all_entity_reports(as_of=None, compare_to=None,
+                                formats=('pdf',), out_dir='.',
+                                progress=None) -> list:
+    """Batch: one report per holding entity (entities come from the data,
+    so a zero-holdings entity cannot occur here; direct calls with a
+    stale scope string yield an honest empty report instead)."""
+    import models
+    entities = models.get_entities()
+    written = []
+    for i, e in enumerate(entities, 1):
+        if progress:
+            progress(i, len(entities), e)
+        written.extend(generate_portfolio_report(
+            scope=e, as_of=as_of, compare_to=compare_to,
+            formats=formats, out_dir=out_dir))
+    return written
 
 
 def generate_company_report(company_id, as_of: date | None = None,

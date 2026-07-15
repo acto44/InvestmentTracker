@@ -98,6 +98,100 @@ def render_series_chart_png(series: list, markers: list | None = None,
     return buf.getvalue()
 
 
+def render_nav_chart_png(series: list, sym: str = 'TKR', title: str = '',
+                         width_in: float = 7.0,
+                         height_in: float = 3.0) -> bytes:
+    """NAV + cumulative invested + cumulative realized (print-light)."""
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    import matplotlib.ticker as mticker
+
+    fig = Figure(figsize=(width_in, height_in), facecolor='white')
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    ax.set_facecolor('white')
+    for spine in ax.spines.values():
+        spine.set_color(GRID)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.tick_params(colors=MUTED, labelcolor=MUTED, labelsize=8)
+    ax.grid(True, color=GRID, linewidth=0.6, alpha=0.7)
+
+    xs = [p['date'] for p in series]
+    ax.step(xs, [p['nav'] for p in series], where='post', color=ACCENT,
+            linewidth=2, label='NAV')
+    ax.step(xs, [p['invested_cum'] for p in series], where='post',
+            color=MUTED, linewidth=1.4, linestyle='--',
+            label='Invested (cum.)')
+    ax.step(xs, [p['realized_cum'] for p in series], where='post',
+            color=GREEN, linewidth=1.4, label='Realized (cum.)')
+    est = [p for p in series if p['is_estimate']]
+    if est:
+        ax.plot([p['date'] for p in est], [p['nav'] for p in est], 'o',
+                color=MUTED, markersize=3, label='contains estimates')
+    ax.legend(fontsize=8, frameon=False, labelcolor=MUTED,
+              loc='upper left')
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda v, _: f"{int(v/1000)}K" if abs(v) >= 1000 else str(int(v))))
+    if title:
+        ax.set_title(title, fontsize=10, color=INK, fontweight='bold',
+                     pad=6)
+    fig.tight_layout(pad=1.0)
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=200, facecolor='white')
+    return buf.getvalue()
+
+
+def render_donut_png(rows: list, title: str = '',
+                     size_in: float = 3.4) -> bytes:
+    """Donut for allocation rows [{'label', 'value': {'raw':..}}, ...]."""
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    palette = ['#2563EB', '#0891B2', '#059669', '#CA8A04', '#DC2626',
+               '#7C3AED', '#DB2777', '#64748B']
+    labels = [r['label'] for r in rows][:8]
+    values = [r['value']['raw'] for r in rows][:8]
+
+    fig = Figure(figsize=(size_in, size_in), facecolor='white')
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    wedges, _ = ax.pie(values, colors=palette[:len(values)],
+                       wedgeprops={'width': 0.42, 'edgecolor': 'white'},
+                       startangle=90)
+    total = sum(values) or 1
+    ax.legend(wedges,
+              [f'{l} ({v / total * 100:.0f}%)'
+               for l, v in zip(labels, values)],
+              fontsize=7, frameon=False, labelcolor=INK,
+              loc='center left', bbox_to_anchor=(0.98, 0.5))
+    if title:
+        ax.set_title(title, fontsize=10, color=INK, fontweight='bold')
+    fig.tight_layout(pad=0.8)
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=200, facecolor='white',
+                bbox_inches='tight')
+    return buf.getvalue()
+
+
+def build_portfolio_chart_images(model: dict) -> dict:
+    """{placeholder: png} for a portfolio/entity report model."""
+    out = {}
+    sym = model['meta']['currency']
+    if model.get('series'):
+        out[model['nav_chart']] = render_nav_chart_png(
+            model['series'], sym,
+            title=f'NAV, invested and realized over time ({sym})')
+    alloc = model['allocation']
+    if alloc['by_sector']:
+        out[alloc['sector_chart']] = render_donut_png(
+            alloc['by_sector'], title='Allocation by sector')
+    if alloc['by_entity']:
+        out[alloc['entity_chart']] = render_donut_png(
+            alloc['by_entity'], title='Allocation by holding entity')
+    return out
+
+
 def build_company_chart_images(model: dict) -> dict:
     """{placeholder_name: png_bytes} for a company report model."""
     if not model.get('series'):

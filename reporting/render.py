@@ -219,10 +219,13 @@ def _section_appendix(m):
     items = ''.join(
         f'<p style="font-size:8.5pt; color:{MUTED};">[{i}] {esc(fn)}</p>'
         for i, fn in enumerate(a['footnotes'], 1))
+    aggr = ''.join(
+        f'<p style="font-size:8.5pt; color:{MUTED};"><b>Note:</b> '
+        f'{esc(n)}</p>' for n in a.get('aggregation_notes', []))
     extra = (f'<p style="font-size:8.5pt; color:{MUTED};">'
              f'{esc(a["currency_note"])}</p>')
     return (_h2('appendix', 'Methodology & assumptions')
-            + items + extra)
+            + items + aggr + extra)
 
 
 _SECTION_FUNCS = {
@@ -235,6 +238,172 @@ _SECTION_FUNCS = {
     'documents': lambda m, imgs: _section_documents(m),
     'appendix': lambda m, imgs: _section_appendix(m),
 }
+
+
+# ── Portfolio / entity report sections ────────────────────────────────────────
+
+PORTFOLIO_SECTIONS = ('overview', 'allocation', 'timeline', 'holdings',
+                      'movers', 'appendix')
+
+
+def _p_overview(m, images):
+    o = m['overview']
+    rows = [[esc(o['nav']['fmt']) + _fn(1),
+             esc(o['invested']['fmt']) + _fn(2),
+             esc(o['realized']['fmt']) + _fn(3),
+             esc(o['moic']['fmt']) + _fn(4),
+             esc(o['dpi']['fmt']) + _fn(5),
+             esc(o['tvpi']['fmt']) + _fn(7),
+             esc(o['irr']['fmt']) + _fn(8)]]
+    counts = (f'<p style="font-size:9pt;">Active holdings: '
+              f'<b>{o["n_active"]}</b> &nbsp;·&nbsp; Realized/closed '
+              f'positions: <b>{o["n_exited"]}</b></p>')
+    delta_html = ''
+    d = o.get('deltas')
+    if d:
+        color = GREEN if (d['nav']['raw'] or 0) >= 0 else RED
+        delta_html = (
+            f'<p style="font-size:9.5pt;">Since {esc(d["compare_to"])}: '
+            f'NAV <span style="color:{color};"><b>{esc(d["nav"]["fmt"])}'
+            f' ({esc(d["nav_pct"]["fmt"])})</b></span> &nbsp;·&nbsp; '
+            f'newly invested {esc(d["invested"]["fmt"])} &nbsp;·&nbsp; '
+            f'received {esc(d["realized"]["fmt"])}</p>')
+    return (_h2('overview', 'Overview')
+            + _table(['NAV', 'Invested', 'Realized', 'MOIC', 'DPI',
+                      'TVPI', 'IRR (pooled)'], rows,
+                     aligns=['right'] * 7)
+            + counts + delta_html)
+
+
+def _p_allocation(m, images):
+    a = m['allocation']
+    if not a['by_sector']:
+        return ''
+    parts = [_h2('allocation', 'Allocation')]
+    charts = ''
+    if a['sector_chart'] in images:
+        charts += f'<img src="{a["sector_chart"]}" width="300">'
+    if a['by_entity'] and a['entity_chart'] in images:
+        charts += f' <img src="{a["entity_chart"]}" width="300">'
+    if charts:
+        parts.append(f'<p>{charts}</p>')
+
+    def alloc_table(rows, label):
+        body = [[esc(r['label']), esc(r['value']['fmt']),
+                 esc(r['pct']['fmt'])] for r in rows]
+        return (f'<p style="font-size:9.5pt;"><b>{esc(label)}</b></p>'
+                + _table(['', 'Value', '% of NAV'], body,
+                         aligns=['left', 'right', 'right']))
+
+    parts.append(alloc_table(a['by_sector'], 'By sector'))
+    if a['by_entity']:
+        parts.append(alloc_table(a['by_entity'], 'By holding entity'))
+    return ''.join(parts)
+
+
+def _p_timeline(m, images):
+    if m['nav_chart'] not in images:
+        return ''
+    return (_h2('timeline', 'NAV over time')
+            + f'<p><img src="{m["nav_chart"]}" width="640"></p>')
+
+
+def _p_holdings(m, images):
+    h = m['holdings']
+    parts = []
+    if h['active']:
+        body = []
+        for r in h['active']:
+            est = ' <span style="color:%s; font-size:7pt;">(est.)</span>' \
+                % MUTED if r['is_estimate'] else ''
+            body.append([esc(r['name']), esc(r['entity']),
+                         esc(r['invested']['fmt']),
+                         esc(r['realized']['fmt']),
+                         esc(r['current']['fmt']) + est,
+                         esc(r['moic']['fmt']), esc(r['irr']['fmt']),
+                         esc(r['pct_nav']['fmt'])])
+        parts.append(_h2('holdings', 'Holdings')
+                     + _table(['Company', 'Entity', 'Invested', 'Realized',
+                               'Current value', 'MOIC', 'IRR', '% of NAV'],
+                              body,
+                              aligns=['left', 'left'] + ['right'] * 6))
+    if h['exited']:
+        body = [[esc(r['name']), esc(r['entity']),
+                 esc(r['invested']['fmt']), esc(r['realized']['fmt']),
+                 esc(r['multiple']['fmt']), esc(r['irr']['fmt'])]
+                for r in h['exited']]
+        parts.append(
+            f'<p style="font-size:9.5pt;"><b>Realized positions</b></p>'
+            + _table(['Company', 'Entity', 'Invested', 'Proceeds',
+                      'Multiple', 'IRR'], body,
+                     aligns=['left', 'left'] + ['right'] * 4))
+    if not parts:
+        return (_h2('holdings', 'Holdings')
+                + f'<p style="color:{MUTED};">No holdings recorded for '
+                  'this scope as of the report date.</p>')
+    return ''.join(parts)
+
+
+def _p_movers(m, images):
+    mv = m.get('movers')
+    if not mv:
+        return ''
+    parts = [_h2('movers', 'Movers in the period')]
+    if mv['valuation_changes']:
+        body = []
+        for r in mv['valuation_changes']:
+            color = GREEN if r['delta']['raw'] >= 0 else RED
+            est = ' (est.)' if r['is_estimate'] else ''
+            body.append([esc(r['name']), esc(r['from']['fmt']),
+                         esc(r['to']['fmt']),
+                         f'<span style="color:{color};">'
+                         f'{esc(r["delta"]["fmt"])}{esc(est)}</span>'])
+        parts.append(
+            f'<p style="font-size:9.5pt;"><b>Position value changes</b></p>'
+            + _table(['Company', 'From', 'To', 'Δ'], body,
+                     aligns=['left', 'right', 'right', 'right']))
+    for key, label in (('new_investments', 'New investments'),
+                       ('received', 'Distributions & proceeds received')):
+        if mv[key]:
+            body = [[esc(r['date']), esc(r['name']), esc(r['type']),
+                     esc(r['amount']['fmt']), esc(r['note'])]
+                    for r in mv[key]]
+            parts.append(
+                f'<p style="font-size:9.5pt;"><b>{esc(label)}</b></p>'
+                + _table(['Date', 'Company', 'Type', 'Amount', 'Note'],
+                         body,
+                         aligns=['left', 'left', 'left', 'right', 'left']))
+    return ''.join(parts) if len(parts) > 1 else ''
+
+
+_PORTFOLIO_FUNCS = {
+    'overview': _p_overview,
+    'allocation': _p_allocation,
+    'timeline': _p_timeline,
+    'holdings': _p_holdings,
+    'movers': _p_movers,
+    'appendix': lambda m, imgs: _section_appendix(m),
+}
+
+
+def render_portfolio_report_html(model: dict, images: dict | None = None,
+                                 sections=None) -> str:
+    images = images or {}
+    chosen = [s for s in PORTFOLIO_SECTIONS
+              if sections is None or s in sections]
+    body = ''.join(_PORTFOLIO_FUNCS[s](model, images) for s in chosen)
+    meta = model['meta']
+    subtitle = (f'Prepared for {meta["prepared_for"]}'
+                if meta['prepared_for'] else 'All holdings, all entities')
+    return _PAGE.substitute(
+        ink=INK, muted=MUTED, red=RED,
+        company=esc(meta['title']),
+        subtitle=esc(subtitle),
+        app=esc(meta['app']),
+        report_date=esc(meta['report_date']),
+        as_of=esc(meta['as_of']),
+        body=body,
+    )
 
 
 def render_report_html(model: dict, images: dict | None = None,

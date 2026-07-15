@@ -54,11 +54,14 @@ ui/detail_panel.py       per-company tabs: Overview / Rounds / Documents
 ui/quick_jump.py         Ctrl+K fuzzy company search
 ui/dialogs.py            add/edit company, round & valuation dialogs
 ui/history_dialog.py     read-only audit-trail view (global + per company)
-ui/report_dialog.py      report export dialog: as-of date, sections,
-                         HTML/PDF/both; output folder defaults to
-                         Documents/<AppName> Reports, remembered in
-                         QSettings, warns when inside the app/repo dir
-                         (generated reports contain real data)
+ui/report_dialog.py      per-company report dialog (quick path from the
+                         tree/detail panel); folder rules shared with the
+                         Report Center: default Documents/<AppName>
+                         Reports, QSettings, repo-dir warning
+ui/report_center.py      Report Center (toolbar): Company / Portfolio /
+                         Entity + batch all-companies/all-entities with
+                         progress + cancel; same reporting.export code
+                         path as everything else
 ui/compare_dialog.py     side-by-side company comparison
 ui/import_dialog.py, ui/family_import_dialog.py, ui/family_edit_dialog.py
                          Excel import + entity management
@@ -195,3 +198,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | 2026-07-14 | 3 | Cash-flow ledger: cashflows table (backfilled 1 investment flow per round), round↔flow write-through in the same transaction, signed_amount() sign convention, DPI/RVPI/TVPI + realized/unrealized split, date-true XIRR with terminal-value assumption + bracket-scan bisection for multi-sign-change cases, closed-position rule (Exited/Bankrupt ⇒ unrealized 0), shares_held + oversell guard + ownership scaling after partial sales, ledger UI in Rounds & Cash flows tab, CashflowDialog, exit-status offer, dashboard Realized + MOIC/TVPI cards, Excel Cashflows sheet + explicit no-flow-import notes, demo data gains dividends/partial sale/full exit. Incident note: the seeder was accidentally run against the repo-root db (which holds demo data; the real family db in dist/ was never touched) — the session-2 pre-migration backup restored it, and seed_demo_data now refuses a populated default-path db without --yes | v3: cashflows |
 | 2026-07-14 | 4 | Time axis: pure derived series in metrics.py (position_value_at with net-invested estimate fallback + is_estimate flag, invested/realized_to_date, month_end_grid, nav_series, quarter helpers, nav_quarter_delta) — derived-not-stored decision + same-day/closed-zero rules recorded as invariant; dashboard Portfolio-over-time chart (NAV/invested/realized steps, 1Y/3Y/All, estimate markers) + quarter-delta KPI; company position-value chart with ▲/▼ flow markers, hover tooltips, dashed estimate segments; company_updates journal (v4) with audited CRUD, Journal tab, demo entries | v4: company_updates |
 | 2026-07-14 | 5 | Company reports: reporting/ package (builder → render → export; named reporting/ because reports/ is the gitignored output dir), as-of-correct pure model with raw+fmt figures via new shared formatting.py, print-light offscreen charts (matplotlib Agg, 2×), QTextDocument-safe HTML (REPORT_STYLE_NOTES) with named image placeholders, portable single-file HTML (base64) + A4 PDF (QTextDocument resources + QPrinter), footnote appendix imports metrics.py strings, CONFIDENTIAL header/footer, AI-narrative anchor slot for session 8, ReportDialog (safe default folder in Documents, QSettings, repo-folder warning) reachable from toolbar/tree context menu/detail panel; filenames sanitized (Å/ö preserved) | none |
+| 2026-07-14 | 6 | Portfolio & entity reports + Report Center: _company_figures extracted so both builders share one math path (consistency portfolio == Σ company models enforced by test), build_portfolio_report_model(scope, as_of, compare_to) with pooled cash-flow IRR (FOOTNOTE_POOLED_IRR — not the average of company IRRs), NAV/sector/entity allocation (by NAV, FOOTNOTE_ALLOCATION), NAV-over-time chart, holdings + Realized positions tables, Movers (valuation changes/new investments/received) when compare_to set, aggregation notes ("N positions carried at net invested capital"); entity report = same pipeline scoped + Prepared-for header, zero forked paths; unknown scope → honest empty report (documented); donut + 3-series NAV chart helpers in charts.py; Report Center dialog (types, batch all-companies/all-entities with progress+cancel, QSettings) replaces the toolbar action — tree/detail quick dialog unchanged and on the same export functions | none |

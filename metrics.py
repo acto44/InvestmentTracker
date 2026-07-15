@@ -72,6 +72,13 @@ FOOTNOTE_CLOSED = ("Position closed (exited/written off): unrealized "
 FOOTNOTE_OWNERSHIP_AFTER_SALE = (
     "Ownership after partial sales = last recorded ownership × share of "
     "originally received shares still held.")
+FOOTNOTE_POOLED_IRR = (
+    "Portfolio IRR is the pooled cash-flow IRR: every dated flow across "
+    "the scope's holdings plus one terminal flow of the scope's NAV at "
+    "the as-of date — NOT the average of company IRRs.")
+FOOTNOTE_ALLOCATION = (
+    "Allocation is by current position value (NAV) at the as-of date; "
+    "closed positions carry no NAV and are excluded.")
 
 
 def roi(invested: float, current_value: float) -> Optional[float]:

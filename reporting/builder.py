@@ -42,22 +42,12 @@ def _money(v, sym):
     return {'raw': v, 'fmt': F.fmt_money(v, sym)}
 
 
-def build_company_report_model(company_id, as_of: date | None = None) -> dict:
-    as_of = as_of or date.today()
-    sym = models.get_setting('currency', 'TKR')
-
-    c = models.get_company(company_id)
-    if not c:
-        raise ValueError(f'no company with id {company_id}')
-    rounds_all = models.get_rounds(company_id)
-    vals_all = models.get_valuations(company_id)      # newest first
-    flows_all = models.get_cashflows(company_id)      # date ascending
-
-    rounds = [r for r in rounds_all if not r.get('date') or _le(r['date'], as_of)]
-    vals = [v for v in vals_all if _le(v['as_of_date'], as_of)]
+def _company_figures(c, rounds_all, vals_all, flows_all,
+                     as_of: date) -> dict:
+    """Historically correct core figures for one company at as_of.
+    Shared by the company AND portfolio builders — the consistency
+    guarantee between them holds by construction (and by test)."""
     flows = [f for f in flows_all if _le(f['date'], as_of)]
-
-    # ── position figures, historically correct at as_of ──────────────────
     invested = metrics.invested_to_date(flows_all, as_of)
     realized = metrics.realized_to_date(flows_all, as_of)
     pv = metrics.position_value_at(c, rounds_all, vals_all, flows_all, as_of)
@@ -76,6 +66,34 @@ def build_company_report_model(company_id, as_of: date | None = None) -> dict:
     if unrealized > 0:
         signed.append((as_of.isoformat(), unrealized))
     irr = metrics.irr(signed, as_of) if len(signed) >= 2 else None
+
+    closed = metrics.is_closed(c.get('notes')) and unrealized == 0
+    return {'invested': invested, 'realized': realized,
+            'unrealized': unrealized, 'is_estimate': is_estimate,
+            'moic': moic, 'dpi': dpi, 'rvpi': rvpi, 'tvpi': tvpi,
+            'irr': irr, 'signed_flows': signed, 'closed': closed}
+
+
+def build_company_report_model(company_id, as_of: date | None = None) -> dict:
+    as_of = as_of or date.today()
+    sym = models.get_setting('currency', 'TKR')
+
+    c = models.get_company(company_id)
+    if not c:
+        raise ValueError(f'no company with id {company_id}')
+    rounds_all = models.get_rounds(company_id)
+    vals_all = models.get_valuations(company_id)      # newest first
+    flows_all = models.get_cashflows(company_id)      # date ascending
+
+    rounds = [r for r in rounds_all if not r.get('date') or _le(r['date'], as_of)]
+    vals = [v for v in vals_all if _le(v['as_of_date'], as_of)]
+    flows = [f for f in flows_all if _le(f['date'], as_of)]
+
+    fig = _company_figures(c, rounds_all, vals_all, flows_all, as_of)
+    invested, realized = fig['invested'], fig['realized']
+    unrealized, is_estimate = fig['unrealized'], fig['is_estimate']
+    moic, dpi, rvpi, tvpi = fig['moic'], fig['dpi'], fig['rvpi'], fig['tvpi']
+    irr = fig['irr']
 
     latest_val = vals[0] if vals else None
     val_as_of = latest_val['as_of_date'] if latest_val else None
@@ -246,6 +264,244 @@ def build_company_report_model(company_id, as_of: date | None = None) -> dict:
             'currency_note': (f'All figures in {sym}; no FX conversion '
                               'applied.'),
             'estimate_note': (metrics.FOOTNOTE_ESTIMATE if estimate_any
+                              else None),
+        },
+    }
+
+
+# ── Portfolio / entity report model ──────────────────────────────────────────
+
+def build_portfolio_report_model(scope: str | None = None,
+                                 as_of: date | None = None,
+                                 compare_to: date | None = None) -> dict:
+    """scope=None → whole portfolio; scope='<entity>' → one family
+    member's holdings. compare_to (optional, typically the previous
+    quarter-end) adds deltas and the Movers section. An unknown/empty
+    scope yields an honest empty report — batches iterate real entities,
+    so that only happens for stale scope strings."""
+    as_of = as_of or date.today()
+    sym = models.get_setting('currency', 'TKR')
+    data = models.timeseries_inputs(entity=scope)
+
+    per_company = []
+    for c, rounds, vals, flows in data:
+        fig = _company_figures(c, rounds, vals, flows, as_of)
+        fig['company'] = c
+        per_company.append(fig)
+
+    invested = sum(f['invested'] for f in per_company)
+    realized = sum(f['realized'] for f in per_company)
+    nav = sum(f['unrealized'] for f in per_company)
+    n_estimates = sum(1 for f in per_company
+                      if f['is_estimate'] and not f['closed'])
+    active = [f for f in per_company if not f['closed'] and
+              (f['invested'] > 0 or f['unrealized'] > 0)]
+    exited = [f for f in per_company if f['closed'] and f['invested'] > 0]
+
+    moic = dpi = rvpi = tvpi = None
+    if invested > 0:
+        dpi = realized / invested
+        rvpi = nav / invested
+        tvpi = dpi + rvpi
+        moic = (realized + nav) / invested
+
+    # pooled IRR: every signed ledger flow in scope + ONE terminal NAV
+    # flow (the per-company terminal values are excluded and replaced)
+    pooled = []
+    for f in per_company:
+        pooled.extend(x for x in f['signed_flows']
+                      if not (x[0] == as_of.isoformat() and x[1] > 0
+                              and x[1] == f['unrealized']))
+    if nav > 0:
+        pooled.append((as_of.isoformat(), nav))
+    pooled_irr = metrics.irr(pooled, as_of) if len(pooled) >= 2 else None
+
+    # deltas vs compare_to
+    deltas = None
+    if compare_to:
+        prev_inv = sum(metrics.invested_to_date(fl, compare_to)
+                       for _, _, _, fl in data)
+        prev_real = sum(metrics.realized_to_date(fl, compare_to)
+                        for _, _, _, fl in data)
+        prev_nav = sum(metrics.position_value_at(c, r, v, fl,
+                                                 compare_to)['value']
+                       for c, r, v, fl in data)
+        deltas = {
+            'compare_to': compare_to.isoformat(),
+            'nav': {'raw': nav - prev_nav,
+                    'fmt': F.fmt_signed_money(nav - prev_nav, sym)},
+            'nav_pct': {'raw': ((nav - prev_nav) / prev_nav * 100
+                                if prev_nav else None),
+                        'fmt': F.fmt_pct((nav - prev_nav) / prev_nav * 100
+                                         if prev_nav else None)},
+            'invested': {'raw': invested - prev_inv,
+                         'fmt': F.fmt_signed_money(invested - prev_inv,
+                                                   sym)},
+            'realized': {'raw': realized - prev_real,
+                         'fmt': F.fmt_signed_money(realized - prev_real,
+                                                   sym)},
+        }
+
+    # allocation by NAV (closed positions carry no NAV)
+    def _alloc(key_fn):
+        buckets: dict = {}
+        for f in per_company:
+            if f['unrealized'] <= 0:
+                continue
+            k = key_fn(f['company']) or 'Unspecified'
+            buckets[k] = buckets.get(k, 0.0) + f['unrealized']
+        rows = [{'label': k, 'value': _money(v, sym),
+                 'pct': {'raw': v / nav * 100 if nav else None,
+                         'fmt': F.fmt_pct(v / nav * 100 if nav else None,
+                                          signed=False)}}
+                for k, v in sorted(buckets.items(),
+                                   key=lambda kv: kv[1], reverse=True)]
+        return rows
+
+    by_sector = _alloc(lambda c: (c.get('sector') or '').strip())
+    by_entity = None if scope else _alloc(
+        lambda c: (c.get('entity') or '').strip())
+
+    # NAV over time for the scope
+    first = metrics.first_flow_date(data)
+    series = []
+    if first and first <= as_of:
+        grid = metrics.month_end_grid(first, as_of)
+        series = metrics.nav_series(data, grid)
+
+    # holdings tables
+    def _holding_row(f):
+        c = f['company']
+        return {
+            'name': c['name'],
+            'entity': c.get('entity') or '',
+            'sector': c.get('sector') or '',
+            'invested': _money(f['invested'], sym),
+            'realized': _money(f['realized'], sym),
+            'current': _money(f['unrealized'], sym),
+            'is_estimate': f['is_estimate'],
+            'moic': {'raw': f['moic'], 'fmt': F.fmt_multiple(f['moic'])},
+            'irr': {'raw': f['irr'], 'fmt': F.fmt_irr(f['irr'])},
+            'pct_nav': {'raw': (f['unrealized'] / nav * 100
+                                if nav else None),
+                        'fmt': F.fmt_pct(f['unrealized'] / nav * 100
+                                         if nav else None, signed=False)},
+        }
+
+    active_rows = [_holding_row(f) for f in
+                   sorted(active, key=lambda x: x['unrealized'],
+                          reverse=True)]
+    exited_rows = [{
+        'name': f['company']['name'],
+        'entity': f['company'].get('entity') or '',
+        'invested': _money(f['invested'], sym),
+        'realized': _money(f['realized'], sym),
+        'multiple': {'raw': f['dpi'], 'fmt': F.fmt_multiple(f['dpi'])},
+        'irr': {'raw': f['irr'], 'fmt': F.fmt_irr(f['irr'])},
+    } for f in sorted(exited, key=lambda x: x['realized'], reverse=True)]
+
+    # movers (only with compare_to)
+    movers = None
+    if compare_to:
+        val_changes = []
+        for c, rounds, vals, flows in data:
+            now = metrics.position_value_at(c, rounds, vals, flows, as_of)
+            then = metrics.position_value_at(c, rounds, vals, flows,
+                                             compare_to)
+            d = now['value'] - then['value']
+            if abs(d) > 1e-9:
+                val_changes.append({
+                    'name': c['name'],
+                    'from': _money(then['value'], sym),
+                    'to': _money(now['value'], sym),
+                    'delta': {'raw': d, 'fmt': F.fmt_signed_money(d, sym)},
+                    'is_estimate': now['is_estimate'] or
+                                   then['is_estimate'],
+                })
+        val_changes.sort(key=lambda r: abs(r['delta']['raw']),
+                         reverse=True)
+
+        def _period_flows(types):
+            rows = []
+            for c, _, _, flows in data:
+                for f in flows:
+                    d = metrics._parse_date(f.get('date'))
+                    if (d and compare_to < d <= as_of
+                            and f['type'] in types):
+                        rows.append({'date': f['date'],
+                                     'name': c['name'],
+                                     'type': f['type'].replace('_', ' '),
+                                     'amount': _money(f['amount'], sym),
+                                     'note': f.get('note') or ''})
+            rows.sort(key=lambda r: r['date'])
+            return rows
+
+        movers = {
+            'valuation_changes': val_changes[:10],
+            'new_investments': _period_flows(metrics.OUTFLOW_TYPES),
+            'received': _period_flows(metrics.INFLOW_TYPES),
+        }
+
+    footnotes = [
+        metrics.VALUATION_MEANING_FOOTNOTE,
+        metrics.FOOTNOTE_INVESTED,
+        metrics.FOOTNOTE_REALIZED,
+        metrics.FOOTNOTE_MOIC,
+        metrics.FOOTNOTE_DPI,
+        metrics.FOOTNOTE_RVPI,
+        metrics.FOOTNOTE_TVPI,
+        metrics.FOOTNOTE_POOLED_IRR,
+        metrics.FOOTNOTE_ALLOCATION,
+        metrics.FOOTNOTE_CLOSED,
+    ]
+    aggregation_notes = [f'All figures as of {as_of.isoformat()}.']
+    if n_estimates:
+        aggregation_notes.append(
+            f'{n_estimates} position{"s" if n_estimates != 1 else ""} '
+            'without a recorded valuation '
+            f'{"are" if n_estimates != 1 else "is"} carried at net '
+            'invested capital (estimate).')
+        footnotes.append(metrics.FOOTNOTE_ESTIMATE)
+
+    title = (f'Entity Report — {scope}' if scope
+             else 'Portfolio Report')
+    return {
+        'meta': {
+            'title': title,
+            'prepared_for': scope or '',
+            'scope': scope,
+            'as_of': as_of.isoformat(),
+            'compare_to': compare_to.isoformat() if compare_to else None,
+            'report_date': date.today().isoformat(),
+            'app': f'{APP_NAME} {APP_VERSION}',
+            'currency': sym,
+        },
+        'overview': {
+            'nav': _money(nav, sym),
+            'invested': _money(invested, sym),
+            'realized': _money(realized, sym),
+            'moic': {'raw': moic, 'fmt': F.fmt_multiple(moic)},
+            'dpi': {'raw': dpi, 'fmt': F.fmt_multiple(dpi)},
+            'tvpi': {'raw': tvpi, 'fmt': F.fmt_multiple(tvpi)},
+            'irr': {'raw': pooled_irr, 'fmt': F.fmt_irr(pooled_irr)},
+            'n_active': len(active),
+            'n_exited': len(exited),
+            'n_estimates': n_estimates,
+            'deltas': deltas,
+        },
+        'allocation': {'by_sector': by_sector, 'by_entity': by_entity,
+                       'sector_chart': 'chart-alloc-sector',
+                       'entity_chart': 'chart-alloc-entity'},
+        'nav_chart': 'chart-nav',
+        'series': series,
+        'holdings': {'active': active_rows, 'exited': exited_rows},
+        'movers': movers,
+        'appendix': {
+            'footnotes': footnotes,
+            'aggregation_notes': aggregation_notes,
+            'currency_note': (f'All figures in {sym}; no FX conversion '
+                              'applied.'),
+            'estimate_note': (metrics.FOOTNOTE_ESTIMATE if n_estimates
                               else None),
         },
     }
