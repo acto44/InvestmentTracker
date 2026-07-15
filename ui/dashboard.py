@@ -69,6 +69,30 @@ class _HeroArt(QWidget):
         p.end()
 
 
+class _Bar(QWidget):
+    """Thin progress/indicator bar for the health sub-cards
+    (green/amber/red carries the meaning)."""
+
+    def __init__(self, fraction: float, color: str, parent=None):
+        super().__init__(parent)
+        self._frac = max(0.0, min(1.0, fraction))
+        self._color = color
+        self.setFixedHeight(5)
+
+    def paintEvent(self, event):
+        from PyQt6.QtGui import QColor, QPainter
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 20))
+        p.drawRoundedRect(0, 0, self.width(), 5, 2.5, 2.5)
+        w = int(self.width() * self._frac)
+        if w > 4:
+            p.setBrush(QColor(self._color))
+            p.drawRoundedRect(0, 0, w, 5, 2.5, 2.5)
+        p.end()
+
+
 class _Ring(QWidget):
     """Circular progress ring (target: 'Valuations covered')."""
 
@@ -178,7 +202,8 @@ class _Card(QFrame):
     (subtext always exists, blank if unused) — so a row of cards shares
     heights and baselines by construction."""
 
-    def __init__(self, title, value, subtitle=None, value_color=None, min_w=160, tooltip=None):
+    def __init__(self, title, value, subtitle=None, value_color=None,
+                 min_w=160, tooltip=None, bar=None):
         super().__init__()
         from ui.styles import BORDER_SOFT, CARD_PAD, RADIUS, label_font
         self.setStyleSheet(f"""
@@ -205,6 +230,9 @@ class _Card(QFrame):
         v.setStyleSheet(f"font-size:16pt; font-weight:600; "
                         f"color:{value_color or TEXT}; border:none;")
         lay.addWidget(v)
+
+        if bar is not None:
+            lay.addWidget(_Bar(*bar))
 
         s = QLabel(str(subtitle) if subtitle else " ")
         s.setStyleSheet(f"color:{value_color or MUTED}; font-size:9pt; border:none;")
@@ -1165,13 +1193,13 @@ class DashboardTab(QWidget):
 
         coverage_pct = invested_of_known / total_invested * 100 if total_invested else 0
         coverage_conf = "high" if coverage_pct >= 70 else ("medium" if coverage_pct >= 40 else "low")
-        cov_color    = GREEN if coverage_pct >= 70 else (MUTED if coverage_pct >= 40 else RED)
+        cov_color    = GREEN if coverage_pct >= 70 else (AMBER if coverage_pct >= 40 else RED)
 
         sorted_co   = sorted(companies, key=lambda c: co_met[c['id']]['total_invested'], reverse=True)
         top3_inv    = sum(co_met[c['id']]['total_invested'] for c in sorted_co[:3])
         conc_pct    = top3_inv / total_invested * 100 if total_invested else 0
         conc_label  = "high" if conc_pct >= 60 else ("medium" if conc_pct >= 40 else "low")
-        conc_color  = RED if conc_label == "high" else (MUTED if conc_label == "medium" else GREEN)
+        conc_color  = RED if conc_label == "high" else (AMBER if conc_label == "medium" else GREEN)
 
         loss_exp = sum(
             co_met[c['id']]['total_invested'] for c in known
@@ -1187,39 +1215,48 @@ class DashboardTab(QWidget):
         total_gain  = sum(g for _, g in gains if g > 0)
         top3_gain   = sum(g for _, g in gains[:3] if g > 0)
         winners_dep = top3_gain / total_gain * 100 if total_gain > 0 else 0
-        win_color   = RED if winners_dep > 80 else (MUTED if winners_dep > 60 else GREEN)
+        win_color   = RED if winners_dep > 80 else (AMBER if winners_dep > 60 else GREEN)
 
+        from ui.styles import BORDER_SOFT, RADIUS
         frame = QFrame()
+        frame.setObjectName("HealthCard")
         frame.setStyleSheet(
-            f"QFrame {{ background:{CARD}; border:1px solid {BORDER}; border-radius:10px; }}"
+            f"QFrame#HealthCard {{ background:{CARD}; border:1px solid "
+            f"{BORDER_SOFT}; border-radius:{RADIUS}px; }}"
         )
         lay = QVBoxLayout(frame)
         lay.setContentsMargins(18, 14, 18, 14)
         lay.setSpacing(10)
 
-        hdr = QLabel("Portfolio Health")
+        hdr = QLabel(f"<span style='color:{ACCENT};'>⌁</span>&nbsp; "
+                     f"Portfolio Health")
         hdr.setStyleSheet(f"font-weight:bold; font-size:11pt; color:{TEXT}; border:none;")
         lay.addWidget(hdr)
 
         badge_row = QHBoxLayout()
-        badge_row.setSpacing(10)
+        badge_row.setSpacing(12)
         badge_row.addWidget(_Card("Valuation coverage", f"{coverage_pct:.0f}%",
                                   f"{coverage_conf} confidence", cov_color,
+            bar=(coverage_pct / 100, cov_color),
             tooltip="What percentage of your invested capital has a current valuation.\n"
                     "High (70%+) = good picture of portfolio value.\n"
                     "Low = many companies unvalued, so total figures are estimates."))
         badge_row.addWidget(_Card("Concentration risk", conc_label.capitalize(),
                                   f"Top 3 = {conc_pct:.0f}% of capital", conc_color,
+            bar=(conc_pct / 100, conc_color),
             tooltip="How much of your total invested capital is concentrated in just the top 3 companies.\n"
                     "High (60%+) = if those companies struggle, the whole portfolio is affected.\n"
                     "Low = capital spread more evenly, less risk from any single company."))
         badge_row.addWidget(_Card("Loss exposure", f"{sym} {loss_exp:,.0f}",
                                   "in holdings below 0.5× MOIC", loss_color,
+            bar=((loss_exp / total_invested) if total_invested else 0,
+                 loss_color),
             tooltip="Total capital invested in companies currently worth less than half what was put in.\n"
                     "MOIC below 0.5× means you'd get back less than 50 cents per krona invested.\n"
                     "Zero is best — means no companies are deeply underwater."))
         badge_row.addWidget(_Card("Winners dependency", f"{winners_dep:.0f}%",
                                   "of gains from top 3 holdings", win_color,
+            bar=(winners_dep / 100, win_color),
             tooltip="How much of the portfolio's total profit comes from just the top 3 best performers.\n"
                     "Very high (80%+) = the portfolio's success depends heavily on a few companies.\n"
                     "Lower = gains are spread across more companies, a healthier sign."))
