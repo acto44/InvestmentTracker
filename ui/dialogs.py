@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QComboBox, QPushButton, QFileDialog, QMessageBox,
     QDialogButtonBox, QDoubleSpinBox, QDateEdit, QGroupBox, QScrollArea,
     QWidget, QRadioButton, QTableWidget, QTableWidgetItem, QFrame,
-    QSizePolicy, QSpacerItem, QCheckBox
+    QSizePolicy, QSpacerItem, QCheckBox, QTabWidget
 )
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QFont
@@ -888,13 +888,18 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(520)
         self._build()
 
     def _build(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
+        tabs = QTabWidget()
+
+        general = QWidget()
+        gl = QVBoxLayout(general)
+        gl.setSpacing(12)
         form = QFormLayout()
         self.currency_sym  = QLineEdit(models.get_setting('currency', 'TKR'))
         self.currency_sym.setMaximumWidth(80)
@@ -902,7 +907,7 @@ class SettingsDialog(QDialog):
         self.currency_name.setMaximumWidth(100)
         form.addRow("Currency Symbol", self.currency_sym)
         form.addRow("Currency Name",   self.currency_name)
-        layout.addLayout(form)
+        gl.addLayout(form)
 
         backup_group = QGroupBox("Database Backup & Restore")
         bg = QVBoxLayout(backup_group)
@@ -913,7 +918,14 @@ class SettingsDialog(QDialog):
         b2.clicked.connect(self._restore)
         bg.addWidget(b1)
         bg.addWidget(b2)
-        layout.addWidget(backup_group)
+        gl.addWidget(backup_group)
+        gl.addStretch()
+        tabs.addTab(general, "General")
+
+        from ui.ai_settings import AISettingsPage
+        self.ai_page = AISettingsPage(self)
+        tabs.addTab(self.ai_page, "AI")
+        layout.addWidget(tabs)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -925,6 +937,7 @@ class SettingsDialog(QDialog):
     def _save(self):
         models.set_setting('currency',      self.currency_sym.text()  or '$')
         models.set_setting('currency_name', self.currency_name.text() or 'USD')
+        self.ai_page.apply()
         self.accept()
 
     def _backup(self):

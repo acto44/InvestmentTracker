@@ -41,6 +41,25 @@ reporting/               report pipeline, three strict layers:
                          to bundle for the .exe (if template FILES are ever
                          added they must load via a resource_path() helper
                          and be listed in the spec's datas).
+ai/                      AI plumbing (session 7), NO features yet — rails
+                         session 8 builds on:
+                         __init__.py (is_ai_enabled() master gate +
+                         get_provider factory), base.py (AIProvider
+                         protocol + typed AIError exceptions — nothing
+                         outside ai/ touches subprocess/HTTP),
+                         claude_cli.py (Claude Code CLI: PATH or VS Code
+                         extension; prompt via STDIN never argv; --tools ""
+                         --no-session-persistence; NOT --bare, it breaks
+                         OAuth), openai_api.py (urllib POST, no SDK; key
+                         scrubbed from all errors), contract.py (task
+                         contracts; validate_response clamps + escapes —
+                         the ONLY door to the UI), consent.py (per-action
+                         modal, exact payload, Cancel default),
+                         service.py (send_request: gate → consent →
+                         QThread → validate → ai_activity log; the ONE
+                         pipeline features call), keystore.py (DPAPI
+                         at-rest key encryption, obfuscation fallback
+                         with UI warning; key never in the DB)
 seed_demo_data.py        seed(verbose=True): fictional "ViFi" demo
                          portfolio (10 companies, 2 entities) — the ONLY
                          data allowed in fixtures/screenshots/the repo
@@ -52,7 +71,14 @@ ui/tree_panel.py         entities → companies tree, filter, status dots
 ui/dashboard.py          portfolio KPIs, sector donut, charts (matplotlib)
 ui/detail_panel.py       per-company tabs: Overview / Rounds / Documents
 ui/quick_jump.py         Ctrl+K fuzzy company search
-ui/dialogs.py            add/edit company, round & valuation dialogs
+ui/dialogs.py            add/edit company, round & valuation dialogs;
+                         tabbed SettingsDialog (General / AI)
+ui/ai_settings.py        Settings → AI page: master switch (default OFF),
+                         provider pick + live status, DPAPI key entry,
+                         Test connection through the FULL pipeline
+ui/ai_card.py            AICard — THE labeling primitive: every AI-visible
+                         thing renders inside it (provenance header +
+                         "verify before decisions" footer)
 ui/history_dialog.py     read-only audit-trail view (global + per company)
 ui/report_dialog.py      per-company report dialog (quick path from the
                          tree/detail panel); folder rules shared with the
@@ -65,8 +91,10 @@ ui/report_center.py      Report Center (toolbar): Company / Portfolio /
 ui/compare_dialog.py     side-by-side company comparison
 ui/import_dialog.py, ui/family_import_dialog.py, ui/family_edit_dialog.py
                          Excel import + entity management
-tests/                   pytest suite: conftest (temp_db/demo_db),
-                         repo hygiene guard, metrics, fixtures, UI smoke
+tests/                   pytest suite: conftest (temp_db/demo_db + autouse
+                         no_network ban — the suite CANNOT call a real
+                         API), repo hygiene guard, metrics, fixtures,
+                         UI smoke, AI contract/provider/flow tests
 pytest.ini               testpaths=tests — root-level scratch scripts
                          (gitignored, may reference personal paths) must
                          never be collected
@@ -143,6 +171,33 @@ pytest.ini               testpaths=tests — root-level scratch scripts
     (dashed line, marker, or "contains estimates" note)
 - **UI**: keep the dark design system in ui/styles.py and existing
   interaction patterns. Professional ≠ redesign.
+- **AI**: opt-in and consent are the product, not friction.
+  - `ai.is_ai_enabled()` is the SINGLE gate, default OFF; while off, no
+    AI affordance exists anywhere outside Settings → AI (tested).
+  - Every send goes through `ai.service.send_request` — nothing else may
+    call a provider. It shows the consent dialog with the EXACT payload
+    before anything leaves the machine; there is no "always allow".
+  - The prompt (the data-bearing part) goes to the Claude CLI via STDIN,
+    never argv; `system` is reserved for fixed instruction strings from
+    ai/contract.py — user/database content never goes in `system`.
+  - Nothing renders un-validated: every reply passes
+    `contract.validate_response` (parse, type-check, clamp lengths/list
+    sizes, HTML-escape, drop unknown fields) and every AI-visible thing
+    renders inside `ui.ai_card.AICard` with provenance + disclaimer.
+  - ai_activity (v5) stores provider/model/task/payload SIZE/outcome —
+    never the payload or reply body, and never a key (scan-tested).
+    The OpenAI key lives DPAPI-encrypted in a user-profile file, never
+    in the database (backups must not carry credentials) and never in
+    logs or exception texts.
+  - The test suite is physically unable to reach a real API (autouse
+    no_network fixture); providers are tested against fakes.
+  - Manual checks each release (CI has no accounts) — last run
+    2026-07-15, both passed:
+    1. Settings → AI → Test connection via Claude CLI completes
+       end-to-end (consent → CLI → validated → AICard shows "pong").
+    2. With a deliberately wrong OpenAI key, Test connection shows the
+       typed auth error ("OpenAI rejected the API key (HTTP 401)…"),
+       not a stack trace, and no key text appears anywhere.
 - **PYINSTALLER RESOURCES**: any data file bundled into the .exe
   (templates, assets) must be resolved through a single resource_path()
   helper that handles sys._MEIPASS. Never open bundled files by relative
@@ -199,3 +254,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | 2026-07-14 | 4 | Time axis: pure derived series in metrics.py (position_value_at with net-invested estimate fallback + is_estimate flag, invested/realized_to_date, month_end_grid, nav_series, quarter helpers, nav_quarter_delta) — derived-not-stored decision + same-day/closed-zero rules recorded as invariant; dashboard Portfolio-over-time chart (NAV/invested/realized steps, 1Y/3Y/All, estimate markers) + quarter-delta KPI; company position-value chart with ▲/▼ flow markers, hover tooltips, dashed estimate segments; company_updates journal (v4) with audited CRUD, Journal tab, demo entries | v4: company_updates |
 | 2026-07-14 | 5 | Company reports: reporting/ package (builder → render → export; named reporting/ because reports/ is the gitignored output dir), as-of-correct pure model with raw+fmt figures via new shared formatting.py, print-light offscreen charts (matplotlib Agg, 2×), QTextDocument-safe HTML (REPORT_STYLE_NOTES) with named image placeholders, portable single-file HTML (base64) + A4 PDF (QTextDocument resources + QPrinter), footnote appendix imports metrics.py strings, CONFIDENTIAL header/footer, AI-narrative anchor slot for session 8, ReportDialog (safe default folder in Documents, QSettings, repo-folder warning) reachable from toolbar/tree context menu/detail panel; filenames sanitized (Å/ö preserved) | none |
 | 2026-07-14 | 6 | Portfolio & entity reports + Report Center: _company_figures extracted so both builders share one math path (consistency portfolio == Σ company models enforced by test), build_portfolio_report_model(scope, as_of, compare_to) with pooled cash-flow IRR (FOOTNOTE_POOLED_IRR — not the average of company IRRs), NAV/sector/entity allocation (by NAV, FOOTNOTE_ALLOCATION), NAV-over-time chart, holdings + Realized positions tables, Movers (valuation changes/new investments/received) when compare_to set, aggregation notes ("N positions carried at net invested capital"); entity report = same pipeline scoped + Prepared-for header, zero forked paths; unknown scope → honest empty report (documented); donut + 3-series NAV chart helpers in charts.py; Report Center dialog (types, batch all-companies/all-entities with progress+cancel, QSettings) replaces the toolbar action — tree/detail quick dialog unchanged and on the same export functions | none |
+| 2026-07-15 | 7 | Safe AI plumbing, no user-visible features yet (rails for session 8): ai/ package — AIProvider protocol + typed errors, Claude via local Claude Code CLI (flags verified against 2.1.210: -p --output-format json --tools "" --no-session-persistence; prompt via STDIN never argv; neutral cwd; --bare avoided, kills OAuth; PATH + VS Code-extension discovery), OpenAI via urllib (no SDK — stdlib-first; default gpt-4.1-mini checked against docs 2026-07-15; max_completion_tokens; key scrubbed from every error), task-contract registry with validate_response (fence-strip, parse, type-check, clamp, HTML-escape, structured rejection), per-action ConsentDialog (exact payload, Cancel default, no "always allow"), service.send_request = the one pipeline (gate → consent → QThread with relay back to caller thread → validate → log), DPAPI keystore (per-user, obfuscation fallback + visible warning); Settings tabbed General/AI (master switch default OFF, live provider status, Test connection through the full real pipeline into an AICard); AICard labeling primitive; autouse no_network test ban; AI invariant + manual account checks recorded above (both passed on owner machine 2026-07-15). 45 new tests (147 total) | v5: ai_activity |

@@ -215,7 +215,26 @@ def _migrate_v4(conn):
     """)
 
 
-MIGRATIONS = [(2, _migrate_v2), (3, _migrate_v3), (4, _migrate_v4)]
+def _migrate_v5(conn):
+    """AI activity log: WHAT was attempted (provider, task, payload size,
+    outcome) — never the payload body itself. Payloads can contain the
+    family's financial data and must not be retained in the database."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS ai_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_utc TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            task_id TEXT NOT NULL,
+            payload_chars INTEGER NOT NULL,
+            outcome TEXT NOT NULL CHECK(outcome IN
+                ('sent_ok','cancelled','validation_failed','provider_error'))
+        );
+    """)
+
+
+MIGRATIONS = [(2, _migrate_v2), (3, _migrate_v3), (4, _migrate_v4),
+              (5, _migrate_v5)]
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
 
 
@@ -1142,6 +1161,28 @@ def set_setting(key, value):
     conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)", (key, value))
     conn.commit()
     conn.close()
+
+def log_ai_activity(provider, model, task_id, payload_chars, outcome):
+    """One row per AI attempt. Only metadata — the payload body is never
+    stored (see _migrate_v5). outcome is CHECK-constrained by the schema."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO ai_activity (ts_utc, provider, model, task_id, "
+            "payload_chars, outcome) VALUES (?,?,?,?,?,?)",
+            (_utcnow(), provider, model or '', task_id,
+             int(payload_chars), outcome))
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_ai_activity(limit=200):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM ai_activity ORDER BY id DESC LIMIT ?",
+        (int(limit),)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 def backup_db(dest_path):
     shutil.copy2(get_db_path(), dest_path)

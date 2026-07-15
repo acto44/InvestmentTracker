@@ -11,10 +11,28 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+import socket  # noqa: E402
+import urllib.request  # noqa: E402
+
 import pytest  # noqa: E402
 
 import models  # noqa: E402
 import seed_demo_data  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """INVARIANT (CLAUDE.md: AI): the suite must be INCAPABLE of calling
+    a real API. Any socket connect or urlopen raises; tests that need a
+    provider use FakeProvider or monkeypatch urlopen with a fake (their
+    own monkeypatch overrides this one for the test's duration)."""
+    def _blocked(*args, **kwargs):
+        raise RuntimeError(
+            "Blocked: network access attempted during tests — use a "
+            "FakeProvider or mock urlopen (tests/conftest.py no_network)")
+    monkeypatch.setattr(socket.socket, 'connect', _blocked)
+    monkeypatch.setattr(socket, 'create_connection', _blocked)
+    monkeypatch.setattr(urllib.request, 'urlopen', _blocked)
 
 
 @pytest.fixture
