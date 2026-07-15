@@ -81,10 +81,34 @@ ui/styles.py             design system (session 10 "restrained fintech"
                          set in stylesheets — app QSS font-size beats
                          QFont). ALL widget styling flows through these
                          tokens; numeric table columns right-aligned.
-ui/main_window.py        MainWindow(): toolbar, Ctrl+N/K/R shortcuts,
-                         QSettings persistence
+ui/main_window.py        MainWindow() app shell (session 11, target-mockup
+                         redesign): fixed 230px sidebar (nav with icons +
+                         History count badge from models.audit_summary,
+                         Ask AI gated as before, portfolio dropdown +
+                         last-update + version in the footer), top bar
+                         (global search → seeded Ctrl+K palette, Add
+                         Company primary, Import/Export menus carrying ALL
+                         former File-menu actions, Refresh, ? help menu),
+                         menu bar removed, Ctrl+N/K/R + Ctrl+, survive as
+                         window QActions; window.tabs = hidden-tab-bar
+                         QTabWidget (stable API) driven by the rail
 ui/tree_panel.py         entities → companies tree, filter, status dots
-ui/dashboard.py          portfolio KPIs, sector donut, charts (matplotlib)
+ui/dashboard.py          target-mockup dashboard (session 11): hero
+                         banner, portfolio-value chart card (metric tabs
+                         Total Value/Gain-Loss/MOIC/per-point-XIRR IRR,
+                         1M–ALL ranges, hover crosshair; ALL series
+                         derived on demand), summary card (%-vs-last-year
+                         + coverage ring), KPI cards (figures never clip:
+                         Ignored h-policies with floors, 15pt values),
+                         Portfolio Health with _Bar indicators, extended
+                         Top-5 card (avatars, ownership, sparklines,
+                         chevron), sector donut + legend, right rail
+                         (Recent Activity from audit_log, Quick Actions,
+                         stale-valuation Alerts) stacking below 1280px
+ui/companies_page.py     session 11: flat sortable all-companies table
+                         (read-only; double-click opens the company)
+ui/transactions_page.py  session 11: global signed cash-flow ledger
+                         (read-only, newest first, signed_amount colors)
 ui/detail_panel.py       per-company tabs: Overview / Rounds / Documents
 ui/quick_jump.py         Ctrl+K fuzzy company search
 ui/dialogs.py            add/edit company, round & valuation dialogs;
@@ -313,3 +337,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | 2026-07-15 | 8 | The three AI capabilities on the session-7 rails: contract system gains enum choices + nested object_list validation; contracts 'narrative' (sections position_narrative/quarter_review + caveats), 'risk_flags' (severity/title/rationale/based_on, empty valid → "No flags raised."), 'qa' (answer/used_fields/follow-ups) with invent-nothing system prompts; ai/context.py whitelisted packs from the report models (documents and their NAMES excluded from every payload — tested against a company WITH documents; packs = the exact consent-preview bytes) + Pseudonymizer (Company A/Entity 1, in-memory mapping, restore on answers, state shown in consent; nothing alias-related persisted); v6 ai_outputs (one CURRENT validated output per company+task with provenance; qa refused by schema CHECK); generate_for_company() = one generation flow shared by the Overview AI block (AICards, regenerate/remove, typed errors + Retry) and the report dialog's generate-first offer; reports render ONLY persisted outputs as 'AI narrative'/'AI risk flags' sections with provenance lines (export provably zero AI calls, call-counter tested; boot too); Ask-AI toolbar action (exists only while enabled) → Q&A dialog with scope picker, per-question consent, session-only history (scan-tested absent from DB); severity chips on status-dot colors. Manual checklist 3–4 run on owner machine via real Claude CLI (PDF with labeled narrative+flags; grounded Q&A answer). 19 new tests (166 total) | v6: ai_outputs |
 | 2026-07-15 | 9 | SUPERDESIGN pass (owner-requested visual overhaul — same interactions, new skin, so the "Professional ≠ redesign" rule is honored by evolving the ONE design system): "soft deep-space" theme in ui/styles.py — indigo-black bg gradient, #101830 cards with hairline rgba(124,147,255,.14) borders, one electric blue→violet gradient (GRADIENT token) for every primary action, segmented pill tabs, 9–14px radii, slim alpha scrollbars, transparent-base tab bars; MetricCard/_Card get gradient surfaces + uppercase 8pt labels, SectionLabel/_SectionTitle become accent-bar micro-headers, dashboard donut palette re-tuned to the indigo family, stray hexes replaced with tokens; design spec mockup for the SuperDesign VS Code canvas in .superdesign/design_iterations/tracker_theme_1.html (gitignored); fixed real ghosting bug found via screenshots: layout _clear helpers now setParent(None) before deleteLater (dashboard + detail panel) so cleared widgets can't paint a stale frame. Verified by native grabs of dashboard + company view. 166 tests green 3x | none |
 | 2026-07-15 | 10 | Restrained-fintech token pass (owner-requested, pure visual, zero behavior): design tokens codified in ui/styles.py header (4/8px spacing, CARD_PAD 20, four flat surfaces, ONE accent #6C7FF2 — session-9 gradient retired to compat aliases, semantic-only green/red/amber, one hairline border, RADIUS 10/6, Inter→Segoe fallback, label_font() for letter-spacing since QSS can't); flat bg (gradient removed); KPI cards get identical label/value/subtext structure + equal min-heights, decorative colors pruned (Known Current Value, Realized → neutral; green/red only on gain/loss); one _pill_style for every toggle row (portfolio/type/chart-range); _MiniTable numerics right-aligned + sized to exactly header+rows (kills the stray strip below the last row); full holdings table numeric columns + headers right-aligned, item hover added in QSS; section headers unified to ONE 8pt uppercase letter-spaced muted style across dashboard/detail/dialogs (accent bars removed); detail _fmt gains the thousands space (TKR 900, matching dashboard + reports); lesson recorded: app-QSS font-size overrides QFont — sizes live in stylesheets, QFont only for letter-spacing | none |
+| 2026-07-15 | 11 | Target-mockup dashboard redesign (owner-supplied reference screenshot; presentational only — every figure identical, all features reachable), 6 phased commits d387f00/53f934b/b35a9c1/398a109/4c343d0/bb523dc: app shell (230px sidebar with icon nav + live History badge + portfolio dropdown footer, top bar with seeded global search + Import/Export menus absorbing the removed menu bar, shortcuts kept), Companies + Transactions read-only pages, target palette (blue #3B82F6 accent, CHART_ACCENT orange reserved for chart series), hero banner (QPainter art, no assets), portfolio-value chart card (derived series only; per-point XIRR for the IRR tab; hover crosshair) + summary card (YoY% from the same series, QPainter coverage ring), health indicator _Bars with semantic ambers, extended Top-5 (avatars/ownership/sparklines from real series/chevrons) + donut card, right rail (audit-log Recent Activity, Quick Actions, stale Alerts w/ badge) with sub-1280px vertical stacking; fit rule learned by measurement: text/figure metrics must not dictate layout minimums — Ignored h-policies + explicit floors, figures never clip (labels may elide); tests: conftest now isolates QSettings to a temp ini (test windows were writing real registry state — found when the owner's sidebar 'vanished'). 166 tests green throughout | none |
