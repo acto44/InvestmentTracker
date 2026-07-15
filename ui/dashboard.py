@@ -36,6 +36,22 @@ except Exception:
     HAS_MPL = False
 
 
+def _pill_style(active: bool) -> str:
+    """THE filter-pill style — every toggle row (portfolio, type, chart
+    range) uses exactly this active/inactive pair."""
+    from ui.styles import ACCENT_LITE, BORDER_SOFT, RADIUS_SM
+    if active:
+        return (f"QPushButton {{ background:{ACCENT_LITE}; color:{ACCENT}; "
+                f"border:1px solid rgba(108,127,242,0.45); "
+                f"border-radius:{RADIUS_SM}px; padding:4px 16px; "
+                f"font-weight:600; font-size:9pt; }}")
+    return (f"QPushButton {{ background:transparent; color:{MUTED}; "
+            f"border:1px solid {BORDER_SOFT}; "
+            f"border-radius:{RADIUS_SM}px; padding:4px 16px; "
+            f"font-weight:600; font-size:9pt; }}"
+            f"QPushButton:hover {{ background:{HOVER}; color:{TEXT}; }}")
+
+
 def _sym():
     return models.get_setting('currency', 'TKR')
 
@@ -54,59 +70,75 @@ def _pct(val):
 # ── Small reusable widgets ────────────────────────────────────────────────────
 
 class _Card(QFrame):
+    """KPI card. IDENTICAL structure everywhere — label / value / subtext
+    (subtext always exists, blank if unused) — so a row of cards shares
+    heights and baselines by construction."""
+
     def __init__(self, title, value, subtitle=None, value_color=None, min_w=160, tooltip=None):
         super().__init__()
-        from ui.styles import BORDER_SOFT
+        from ui.styles import BORDER_SOFT, CARD_PAD, RADIUS, label_font
         self.setStyleSheet(f"""
             QFrame {{
-                background: qlineargradient(x1:0, y1:0, x2:0.4, y2:1,
-                    stop:0 {CARD_ALT}, stop:1 {CARD});
-                border:1px solid {BORDER_SOFT}; border-radius:14px;
+                background: {CARD};
+                border:1px solid {BORDER_SOFT}; border-radius:{RADIUS}px;
             }}
         """)
         if tooltip:
             self.setToolTip(tooltip)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 15, 18, 15)
+        lay.setContentsMargins(CARD_PAD, 16, CARD_PAD, 16)
         lay.setSpacing(4)
 
         t = QLabel(str(title).upper())
-        t.setStyleSheet(f"color:{MUTED}; font-size:8pt; font-weight:600; "
-                        f"border:none;")
+        t.setFont(label_font())          # letter-spacing (QSS can't)
+        t.setStyleSheet(f"color:{MUTED}; font-size:8pt; "
+                        f"font-weight:600; border:none;")
         lay.addWidget(t)
 
         v = QLabel(str(value))
-        v.setStyleSheet(
-            f"font-size:20pt; font-weight:bold; color:{value_color or TEXT}; border:none;"
-        )
+        # size via stylesheet — the app-wide QSS font-size wins over QFont
+        v.setStyleSheet(f"font-size:18pt; font-weight:600; "
+                        f"color:{value_color or TEXT}; border:none;")
         lay.addWidget(v)
 
-        if subtitle:
-            s = QLabel(str(subtitle))
-            s.setStyleSheet(f"color:{value_color or MUTED}; font-size:9pt; border:none;")
-            lay.addWidget(s)
+        s = QLabel(str(subtitle) if subtitle else " ")
+        s.setStyleSheet(f"color:{value_color or MUTED}; font-size:9pt; border:none;")
+        lay.addWidget(s)
+        lay.addStretch()
 
         self.setMinimumWidth(min_w)
+        self.setMinimumHeight(108)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
 
 class _SectionTitle(QLabel):
+    """THE section header style: 8pt uppercase, letter-spaced, muted —
+    hierarchy from type, not decoration (matches detail_panel and
+    dialogs)."""
+
     def __init__(self, text):
         super().__init__(str(text).upper())
-        f = QFont()
-        f.setBold(True)
-        f.setPointSize(9)
-        self.setFont(f)
-        self.setStyleSheet(f"color:{MUTED}; border-left:3px solid {ACCENT}; "
-                           f"padding-left:9px; margin-top:10px;")
+        from ui.styles import label_font
+        self.setFont(label_font())       # letter-spacing (QSS can't)
+        self.setStyleSheet(f"color:{MUTED}; font-size:8pt; "
+                           f"font-weight:600; margin-top:24px;")
 
 
 class _MiniTable(QFrame):
-    """Compact read-only table for top/worst lists."""
+    """Compact read-only table for top/worst lists. Numeric columns
+    (everything but the first) are right-aligned; the widget is sized to
+    EXACTLY header + rows so no empty viewport strip can show below the
+    last row."""
+
+    _ROW_H = 34
+    _HEADER_H = 32
+
     def __init__(self, headers, rows, col_colors=None):
         super().__init__()
+        from ui.styles import BORDER_SOFT, RADIUS
         self.setStyleSheet(
-            f"QFrame {{background:{CARD}; border:1px solid {BORDER}; border-radius:10px;}}"
+            f"QFrame {{background:{CARD}; border:1px solid {BORDER_SOFT}; "
+            f"border-radius:{RADIUS}px;}}"
         )
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -121,11 +153,20 @@ class _MiniTable(QFrame):
         tbl.horizontalHeader().setStretchLastSection(True)
         tbl.setFrameShape(QFrame.Shape.NoFrame)
         tbl.setStyleSheet("QTableWidget { border: none; }")
+        tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
+        right = (Qt.AlignmentFlag.AlignVCenter
+                 | Qt.AlignmentFlag.AlignRight)
+        left = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+        for ci in range(1, len(headers)):
+            it = tbl.horizontalHeaderItem(ci)
+            if it:
+                it.setTextAlignment(right)
         for ri, row_data in enumerate(rows):
+            tbl.setRowHeight(ri, self._ROW_H)
             for ci, val in enumerate(row_data):
                 item = QTableWidgetItem(str(val))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                item.setTextAlignment(left if ci == 0 else right)
                 if col_colors and ci < len(col_colors) and col_colors[ci]:
                     fg = col_colors[ci](val) if callable(col_colors[ci]) else col_colors[ci]
                     if fg:
@@ -133,9 +174,11 @@ class _MiniTable(QFrame):
                 tbl.setItem(ri, ci, item)
 
         tbl.resizeColumnsToContents()
-        tbl.setMinimumHeight(min(35 * len(rows) + 30, 220))
+        exact = self._HEADER_H + self._ROW_H * len(rows) + 10
+        tbl.setFixedHeight(exact)
+        self.setFixedHeight(exact + 2)
         lay.addWidget(tbl)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
 
 # ── Main dashboard ────────────────────────────────────────────────────────────
@@ -161,7 +204,7 @@ class DashboardTab(QWidget):
         self._content = QWidget()
         self._layout  = QVBoxLayout(self._content)
         self._layout.setContentsMargins(24, 20, 24, 24)
-        self._layout.setSpacing(14)
+        self._layout.setSpacing(16)
 
         scroll.setWidget(self._content)
         outer.addWidget(scroll)
@@ -236,11 +279,11 @@ class DashboardTab(QWidget):
         gain_str   = f"{sign}{sym} {abs(total_gain_known):,.0f}"
 
         cards = QHBoxLayout()
-        cards.setSpacing(10)
+        cards.setSpacing(12)
         cards.addWidget(_Card("Total Invested", f"{sym} {total_invested:,.0f}",
             tooltip="The total amount of money put into all companies across all funding rounds."))
         cards.addWidget(_Card("Known Current Value", f"{sym} {total_current_known:,.0f}",
-                              f"({len(known)} companies)", ACCENT,
+                              f"({len(known)} companies)", None,
             tooltip="Current estimated value of all companies that have a valuation set.\n"
                     "Companies without a valuation are not counted here."))
         cards.addWidget(_Card("Gain / Loss (known)", gain_str,
@@ -251,7 +294,7 @@ class DashboardTab(QWidget):
                     "= Current Value − Amount Invested\n"
                     "Green = profit, Red = loss."))
         cards.addWidget(_Card("Realized", f"{sym} {total_realized:,.0f}",
-                              None, GREEN if total_realized else None,
+                              None, None,
             tooltip=m.FOOTNOTE_REALIZED + "\n"
                     "Money already back in the family's pocket — exits, "
                     "partial sales, dividends, distributions."))
@@ -275,7 +318,7 @@ class DashboardTab(QWidget):
         if not self._entity_filter:
             self._layout.addWidget(_SectionTitle("By Portfolio"))
             entity_row = QHBoxLayout()
-            entity_row.setSpacing(10)
+            entity_row.setSpacing(12)
             entities = {}
             for c in all_cos:
                 e = c.get('entity') or 'Unassigned'
@@ -310,12 +353,9 @@ class DashboardTab(QWidget):
             range_row = QHBoxLayout()
             for label in ('1Y', '3Y', 'All'):
                 b = QPushButton(label)
-                b.setFixedWidth(44)
+                b.setFixedWidth(48)
                 active = getattr(self, '_ts_range', 'All') == label
-                b.setStyleSheet(
-                    f"QPushButton {{ background:{ACCENT if active else CARD}; "
-                    f"color:{'white' if active else MUTED}; border:1px solid "
-                    f"{BORDER}; border-radius:6px; padding:3px; }}")
+                b.setStyleSheet(_pill_style(active))
                 b.clicked.connect(lambda _, l=label: self._set_ts_range(l))
                 range_row.addWidget(b)
             range_row.addStretch()
@@ -634,6 +674,11 @@ class DashboardTab(QWidget):
         tbl.setSortingEnabled(True)
         tbl.horizontalHeader().setStretchLastSection(True)
         tbl.setFrameShape(QFrame.Shape.NoFrame)
+        for ci in range(4, len(headers)):     # numeric columns
+            it = tbl.horizontalHeaderItem(ci)
+            if it:
+                it.setTextAlignment(Qt.AlignmentFlag.AlignVCenter
+                                    | Qt.AlignmentFlag.AlignRight)
 
         for ri, c in enumerate(sorted_co):
             met = co_met[c['id']]
@@ -641,8 +686,11 @@ class DashboardTab(QWidget):
             gain = (cur - met['total_invested']) if cur is not None else None
             notes = (c.get('notes') or '').lower()
 
-            def _item(txt, color=None):
+            def _item(txt, color=None, numeric=False):
                 it = QTableWidgetItem(str(txt))
+                if numeric:
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignVCenter
+                                        | Qt.AlignmentFlag.AlignRight)
                 if color:
                     it.setForeground(QColor(color))
                 return it
@@ -665,11 +713,12 @@ class DashboardTab(QWidget):
             tbl.setItem(ri, 1, _item(c.get('entity') or ''))
             tbl.setItem(ri, 2, _item(c.get('investment_type') or ''))
             tbl.setItem(ri, 3, _item(c.get('sector') or ''))
-            tbl.setItem(ri, 4, _item(f"{sym} {met['total_invested']:,.0f}"))
+            tbl.setItem(ri, 4, _item(f"{sym} {met['total_invested']:,.0f}",
+                                     numeric=True))
             tbl.setItem(ri, 5, _item(f"{sym} {cur:,.0f}" if cur is not None else "—",
-                                     ACCENT if cur else MUTED))
-            tbl.setItem(ri, 6, _item(gain_str, gain_col))
-            tbl.setItem(ri, 7, _item(_moic(met.get('moic'))))
+                                     None if cur else MUTED, numeric=True))
+            tbl.setItem(ri, 6, _item(gain_str, gain_col, numeric=True))
+            tbl.setItem(ri, 7, _item(_moic(met.get('moic')), numeric=True))
 
         tbl.resizeColumnsToContents()
         tbl.setMinimumHeight(320)
@@ -684,15 +733,7 @@ class DashboardTab(QWidget):
         lay.setContentsMargins(0, 0, 0, 4)
         lay.setSpacing(4)
 
-        def _btn_style(active):
-            if active:
-                return (f"QPushButton {{ background:{ACCENT}; color:white; border:none; "
-                        f"border-radius:6px; padding:5px 16px; font-weight:bold; font-size:9pt; }}"
-                        f"QPushButton:hover {{ background:{ACCENT}; }}")
-            return (f"QPushButton {{ background:{CARD}; color:{TEXT}; "
-                    f"border:1px solid {BORDER}; border-radius:6px; "
-                    f"padding:5px 16px; font-size:9pt; }}"
-                    f"QPushButton:hover {{ background:{HOVER}; }}")
+        _btn_style = _pill_style
 
         # Row 1: entity filter
         entity_row = QHBoxLayout()

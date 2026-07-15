@@ -19,13 +19,13 @@ DOC_TYPES   = ["SHA", "Investment Agreement", "Other"]
 
 
 def _section(title: str) -> QLabel:
-    lbl = QLabel(title)
-    f = QFont(); f.setBold(True); f.setPointSize(10)
-    lbl.setFont(f)
-    lbl.setStyleSheet(
-        f"color:{ACCENT}; background:{ACCENT_LITE}; border-radius:6px; "
-        f"padding:6px 10px; margin-top:6px;"
-    )
+    """THE section header style (matches SectionLabel/_SectionTitle):
+    8pt uppercase letter-spaced muted."""
+    from ui.styles import label_font
+    lbl = QLabel(str(title).upper())
+    lbl.setFont(label_font())            # letter-spacing (QSS can't)
+    lbl.setStyleSheet(f"color:{MUTED}; font-size:8pt; "
+                      f"font-weight:600; margin-top:16px;")
     return lbl
 
 

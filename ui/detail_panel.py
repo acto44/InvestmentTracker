@@ -22,8 +22,8 @@ from ui.styles import (
 
 _SOFT_BTN_QSS = (
     f"QPushButton {{ background:{SOFT_BTN_BG}; color:{SOFT_BTN_TEXT}; "
-    f"border:1px solid {SOFT_BTN_BORDER}; border-radius:8px; "
-    f"padding:5px 14px; font-size:9pt; font-weight:600; }}"
+    f"border:1px solid {SOFT_BTN_BORDER}; border-radius:6px; "
+    f"padding:4px 12px; font-size:9pt; font-weight:600; }}"
     f"QPushButton:hover {{ background:{SOFT_BTN_HOVER}; }}"
 )
 
@@ -37,7 +37,7 @@ def _fmt(val, sym='$', dec=0):
     if val is None:
         return "n/a"
     try:
-        return f"{sym}{val:,.{dec}f}"
+        return f"{sym} {val:,.{dec}f}"
     except Exception:
         return "n/a"
 
@@ -57,27 +57,30 @@ class MetricCard(QFrame):
     def __init__(self, title, value, subtitle=None, color=None, parent=None, tooltip=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
+        from ui.styles import CARD_PAD, RADIUS, label_font
         self.setStyleSheet(f"""
             QFrame {{
-                background: qlineargradient(x1:0, y1:0, x2:0.4, y2:1,
-                    stop:0 {CARD_ALT}, stop:1 {CARD});
+                background: {CARD};
                 border: 1px solid {BORDER_SOFT};
-                border-radius: 12px;
+                border-radius: {RADIUS}px;
             }}
         """)
         if tooltip:
             self.setToolTip(tooltip)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 13, 16, 13)
+        layout.setContentsMargins(CARD_PAD, 12, CARD_PAD, 12)
         layout.setSpacing(4)
 
         t = QLabel(str(title).upper())
-        t.setStyleSheet(f"color:{MUTED}; font-size:8pt; font-weight:600; "
-                        f"border:none;")
+        t.setFont(label_font())          # letter-spacing (QSS can't)
+        t.setStyleSheet(f"color:{MUTED}; font-size:8pt; "
+                        f"font-weight:600; border:none;")
         layout.addWidget(t)
 
         v = QLabel(str(value))
-        v.setStyleSheet(f"font-size:18pt; font-weight:bold; color:{color or TEXT}; border:none;")
+        # size via stylesheet — the app-wide QSS font-size wins over QFont
+        v.setStyleSheet(f"font-size:15pt; font-weight:600; "
+                        f"color:{color or TEXT}; border:none;")
         layout.addWidget(v)
 
         if subtitle:
@@ -89,14 +92,15 @@ class MetricCard(QFrame):
 
 
 class SectionLabel(QLabel):
+    """THE section header style (same as the dashboard's _SectionTitle):
+    8pt uppercase letter-spaced muted — hierarchy from type alone."""
+
     def __init__(self, text, parent=None):
         super().__init__(str(text).upper(), parent)
-        f = QFont(); f.setBold(True); f.setPointSize(9)
-        self.setFont(f)
-        self.setStyleSheet(
-            f"color:{MUTED}; border-left:3px solid {ACCENT}; "
-            f"padding-left:9px; margin-top:12px;"
-        )
+        from ui.styles import label_font
+        self.setFont(label_font())       # letter-spacing (QSS can't)
+        self.setStyleSheet(f"color:{MUTED}; font-size:8pt; "
+                           f"font-weight:600; margin-top:24px;")
 
 
 # ── Main panel ────────────────────────────────────────────────────────────────
@@ -361,7 +365,7 @@ class DetailPanel(QWidget):
             tooltip=m.FOOTNOTE_INVESTED))
         realized_color = GREEN if met['realized'] else None
         row.addWidget(MetricCard("Realized", _fmt(met['realized'], sym),
-            color=realized_color, tooltip=m.FOOTNOTE_REALIZED))
+            tooltip=m.FOOTNOTE_REALIZED))
         row.addWidget(MetricCard("Current Value", _fmt(met['current_value'], sym),
             tooltip=m.VALUATION_MEANING_FOOTNOTE + closed_note))
         row.addWidget(MetricCard("MOIC", _moic(met['moic']),
