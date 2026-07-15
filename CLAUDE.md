@@ -16,8 +16,10 @@ models.py                SQLite layer: schema, versioned migration runner
 backups.py               SQLite backup-API copies: pre-migration (kept
                          forever) + 24h routine (last 10 kept); backups/
                          next to the DB, override via settings 'backup_dir'
-metrics.py               financial math: ROI, MOIC, annualised IRR
-                         (Newton + bisection); keeps its own self-test
+metrics.py               financial math: ROI, MOIC/DPI/RVPI/TVPI, date-true
+                         XIRR (Newton + bracket-scan bisection,
+                         actual/365.25), signed_amount() sign convention,
+                         footnote strings; keeps its own self-test
 excel_io.py              Excel import/export (openpyxl)
 seed_demo_data.py        seed(verbose=True): fictional "ViFi" demo
                          portfolio (10 companies, 2 entities) — the ONLY
@@ -76,6 +78,24 @@ pytest.ini               testpaths=tests — root-level scratch scripts
   time through shared formatting helpers; every metric shown to the user
   must be able to state its assumptions (footnote strings live next to
   the math in metrics.py, nowhere else).
+- **SIGN CONVENTION**: cash-flow amounts are STORED positive; direction
+  derives from the type in exactly one place — metrics.signed_amount().
+  Outflows from the family ('investment','follow_on','fee','other_out')
+  are negative; inflows ('exit_proceeds','partial_sale','dividend',
+  'distribution','other_in') are positive. Every computation and every
+  display goes through that helper.
+- **LEDGER**: ALL money movement lives in the cashflows table. Investment
+  flows are round-linked and write-through: the round mutators create/
+  update/delete the linked flow in the SAME transaction; public cashflow
+  functions refuse to touch round-linked rows. Metrics read ONLY
+  cashflows — never round.amount_invested directly.
+- **VALUATION MEANING**: a recorded valuation is the WHOLE company's
+  value. Position value = valuation × our ownership %. Ownership comes
+  from the most recent round that has a figure, scaled down after partial
+  sales by the share of originally received shares still held. Companies
+  whose status is Exited or Bankrupt are CLOSED: unrealized value is 0 by
+  definition and only realized proceeds count (the valuation history
+  keeps the record).
 - **UI**: keep the dark design system in ui/styles.py and existing
   interaction patterns. Professional ≠ redesign.
 - **PYINSTALLER RESOURCES**: any data file bundled into the .exe
@@ -90,8 +110,9 @@ Bare `python` on this machine is a Windows Store stub — use the full path.
 # run the app (live database — real data, be careful)
 C:\Users\joelg\AppData\Local\Python\bin\python.exe main.py
 
-# demo data instead of real data (overwrites the CURRENT db — only run
-# against a copy/fresh folder, never the family's live file)
+# demo data (REPLACES the current db's contents; a populated default-path
+# database is refused unless you add --yes — the guard exists because of
+# a near-miss, do not remove it)
 C:\Users\joelg\AppData\Local\Python\bin\python.exe seed_demo_data.py
 
 # test dependencies (once): pip install -r requirements-dev.txt
@@ -125,3 +146,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 |------------|---|-------------------------------------------------------|------------|
 | 2026-07-14 | 1 | CLAUDE.md constitution; repo hygiene guard test; pytest foundation (temp_db/demo_db fixtures, metrics under pytest, UI smoke via pytest-qt offscreen); models.set_db_path() override; seed_demo_data wrapped in seed() (script behavior unchanged); .gitignore extended (backups/, reports/, *.sqlite*) | none |
 | 2026-07-14 | 2 | Trustworthy data layer: backups.py (pre-migration via SQLite backup API + 24h routine, keep-10 rotation); valuation history replaces companies.current_valuation (honest legacy_migration backfill, column dropped, get_current_valuation + enriched company dicts keep all readers working); append-only audit trail written in-transaction by every mutator, with origins (ui.*, excel_import); round↔valuation link + ask-on-delete; Valuation block in Overview; read-only History view (toolbar + per company); metrics UNREALIZED_VALUE_FOOTNOTE | v2: valuations, audit_log, DROP companies.current_valuation |
+| 2026-07-14 | 3 | Cash-flow ledger: cashflows table (backfilled 1 investment flow per round), round↔flow write-through in the same transaction, signed_amount() sign convention, DPI/RVPI/TVPI + realized/unrealized split, date-true XIRR with terminal-value assumption + bracket-scan bisection for multi-sign-change cases, closed-position rule (Exited/Bankrupt ⇒ unrealized 0), shares_held + oversell guard + ownership scaling after partial sales, ledger UI in Rounds & Cash flows tab, CashflowDialog, exit-status offer, dashboard Realized + MOIC/TVPI cards, Excel Cashflows sheet + explicit no-flow-import notes, demo data gains dividends/partial sale/full exit. Incident note: the seeder was accidentally run against the repo-root db (which holds demo data; the real family db in dist/ was never touched) — the session-2 pre-migration backup restored it, and seed_demo_data now refuses a populated default-path db without --yes | v3: cashflows |

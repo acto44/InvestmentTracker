@@ -574,6 +574,128 @@ class ValuationDialog(QDialog):
         }
 
 
+class CashflowDialog(QDialog):
+    """Add or edit a non-round cash flow. Amounts entered positive —
+    direction comes from the type (metrics.signed_amount, see CLAUDE.md).
+    Partial sales capture shares sold and refuse to oversell."""
+
+    TYPES = ['follow_on', 'dividend', 'distribution', 'partial_sale',
+             'exit_proceeds', 'fee', 'other_in', 'other_out']
+    TYPE_LABELS = {
+        'follow_on': 'Follow-on investment (money out)',
+        'dividend': 'Dividend received (money in)',
+        'distribution': 'Distribution received (money in)',
+        'partial_sale': 'Partial sale of shares (money in)',
+        'exit_proceeds': 'Exit proceeds (money in)',
+        'fee': 'Fee paid (money out)',
+        'other_in': 'Other inflow (money in)',
+        'other_out': 'Other outflow (money out)',
+    }
+
+    def __init__(self, parent=None, company_id=None, flow=None):
+        super().__init__(parent)
+        self._cid = company_id
+        self.setWindowTitle("Edit Cash Flow" if flow else "Add Cash Flow")
+        self.setMinimumWidth(440)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self.type_edit = QComboBox()
+        for t in self.TYPES:
+            self.type_edit.addItem(self.TYPE_LABELS[t], t)
+        self.type_edit.currentIndexChanged.connect(self._type_changed)
+        form.addRow("Type *", self.type_edit)
+
+        self.date_edit = QDateEdit(QDate.currentDate())
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_edit.setCalendarPopup(True)
+        form.addRow("Date *", self.date_edit)
+
+        self.amount_edit = QDoubleSpinBox()
+        self.amount_edit.setRange(0, 1e12)
+        self.amount_edit.setDecimals(2)
+        self.amount_edit.setSingleStep(1000)
+        self.amount_edit.setGroupSeparatorShown(True)
+        form.addRow("Amount (positive) *", self.amount_edit)
+
+        import models as _models
+        self._held = (_models.shares_held(company_id)
+                      if company_id else 0)
+        self.shares_edit = QDoubleSpinBox()
+        self.shares_edit.setRange(0, max(self._held, 0))
+        self.shares_edit.setDecimals(0)
+        self.shares_edit.setGroupSeparatorShown(True)
+        self._shares_label = QLabel(
+            f"Shares sold (held: {self._held:,.0f})")
+        form.addRow(self._shares_label, self.shares_edit)
+
+        self.note_edit = QLineEdit()
+        self.note_edit.setPlaceholderText("e.g. FY24 dividend, buyer name…")
+        form.addRow("Note", self.note_edit)
+
+        layout.addLayout(form)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self._validate)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        if flow:
+            idx = self.type_edit.findData(flow.get('type'))
+            if idx >= 0:
+                self.type_edit.setCurrentIndex(idx)
+            if flow.get('date'):
+                self.date_edit.setDate(QDate.fromString(
+                    flow['date'][:10], "yyyy-MM-dd"))
+            self.amount_edit.setValue(flow.get('amount') or 0)
+            if flow.get('shares_delta'):
+                self.shares_edit.setMaximum(
+                    max(self._held - flow['shares_delta'], 0))
+                self.shares_edit.setValue(-flow['shares_delta'])
+            self.note_edit.setText(flow.get('note') or '')
+        self._type_changed()
+
+    def _type_changed(self):
+        is_sale = self.type_edit.currentData() == 'partial_sale'
+        self.shares_edit.setVisible(is_sale)
+        self._shares_label.setVisible(is_sale)
+
+    def _validate(self):
+        if self.amount_edit.value() <= 0:
+            QMessageBox.warning(self, "Invalid",
+                                "Amount must be greater than zero — the "
+                                "direction comes from the type.")
+            return
+        if self.type_edit.currentData() == 'partial_sale':
+            sold = self.shares_edit.value()
+            if sold <= 0:
+                QMessageBox.warning(self, "Shares required",
+                                    "A partial sale needs the number of "
+                                    "shares sold.")
+                return
+            if sold > self._held + 1e-9:
+                QMessageBox.warning(
+                    self, "Too many shares",
+                    f"You hold {self._held:,.0f} shares — you cannot sell "
+                    f"{sold:,.0f}.")
+                return
+        self.accept()
+
+    def get_data(self):
+        t = self.type_edit.currentData()
+        sold = self.shares_edit.value() if t == 'partial_sale' else 0
+        return {
+            'date': self.date_edit.date().toString("yyyy-MM-dd"),
+            'type': t,
+            'amount': self.amount_edit.value(),
+            'shares_delta': -sold if sold else None,
+            'note': self.note_edit.text().strip(),
+        }
+
+
 class DocumentDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)

@@ -212,9 +212,10 @@ def export_portfolio(path: str) -> None:
     ws.freeze_panes = 'A2'
     row_num = 2
 
+    flows_by = models.get_cashflows_by_company()
     for c in companies:
         rounds = models.get_rounds(c['id'])
-        met    = m.company_metrics(rounds, c.get('current_valuation'))
+        met    = m.company_metrics_for(c, rounds, flows_by.get(c['id'], []))
 
         for r in rounds:
             invested     = r.get('amount_invested') or 0
@@ -266,15 +267,18 @@ def export_portfolio(path: str) -> None:
         if not rounds:
             continue
 
-        met      = m.company_metrics(rounds, c.get('current_valuation'))
+        met      = m.company_metrics_for(c, rounds, flows_by.get(c['id'], []))
         ws2      = wb.create_sheet(c['name'][:31])
 
         ws2.cell(row=1, column=1, value=c['name']).font = Font(bold=True, size=13)
         summary_rows = [
-            f"Total Invested:  {sym}{met['total_invested']:,.0f}",
-            f"Current Value:   {sym}{met['current_value']:,.0f}" if met['current_value'] else "Current Value:  n/a (no valuation set)",
+            f"Invested:        {sym}{met['total_invested']:,.0f}",
+            f"Realized:        {sym}{met['realized']:,.0f}",
+            f"Current Value:   {sym}{met['current_value']:,.0f}" if met['current_value'] is not None else "Current Value:  n/a (no valuation set)",
             f"Gain / Loss:     {sym}{met['gain']:,.0f} ({met['roi']:.1f}%)" if met['gain'] is not None else "Gain / Loss:    n/a",
             f"MOIC:            {met['moic']:.2f}×" if met['moic'] else "MOIC:           n/a",
+            f"DPI:             {met['dpi']:.2f}×" if met['dpi'] is not None else "DPI:            n/a",
+            f"TVPI:            {met['tvpi']:.2f}×" if met['tvpi'] else "TVPI:           n/a",
             f"IRR:             {met['irr'] * 100:.1f}%" if met['irr'] else "IRR:            n/a",
         ]
         for i, line in enumerate(summary_rows, 2):
@@ -300,6 +304,36 @@ def export_portfolio(path: str) -> None:
 
         ws2.freeze_panes = 'A9'
         _autofit(ws2)
+
+    # ── Cashflows sheet: the full ledger, signed via metrics.signed_amount ──
+    wsf = wb.create_sheet("Cashflows")
+    fheaders = ["Company", "Date", "Type", "Amount (signed)",
+                "Shares Δ", "Linked Round", "Note"]
+    for col, h in enumerate(fheaders, 1):
+        cell = wsf.cell(row=1, column=col, value=h)
+        cell.font = _HDR_FONT
+        cell.fill = _HDR_FILL
+    frow = 2
+    name_by_id = {c['id']: c['name'] for c in companies}
+    rounds_cache = {c['id']: models.get_rounds(c['id']) for c in companies}
+    for cid, flows in sorted(flows_by.items()):
+        rname_by_id = {r['id']: r.get('round_name') or ''
+                       for r in rounds_cache.get(cid, [])}
+        for f in flows:
+            signed = m.signed_amount(f['type'], f['amount'])
+            wsf.cell(row=frow, column=1, value=name_by_id.get(cid, cid))
+            wsf.cell(row=frow, column=2, value=f.get('date', ''))
+            wsf.cell(row=frow, column=3, value=f['type'])
+            amt = wsf.cell(row=frow, column=4, value=signed)
+            amt.number_format = _CURRENCY
+            amt.fill = _GREEN_FILL if signed >= 0 else _RED_FILL
+            wsf.cell(row=frow, column=5, value=f.get('shares_delta'))
+            wsf.cell(row=frow, column=6,
+                     value=rname_by_id.get(f.get('round_id'), ''))
+            wsf.cell(row=frow, column=7, value=f.get('note', ''))
+            frow += 1
+    wsf.freeze_panes = 'A2'
+    _autofit(wsf)
 
     wb.save(path)
 

@@ -142,8 +142,10 @@ class DetailPanel(QWidget):
         sym      = _sym()
         companies = models.get_companies_by_entity().get(entity_name, [])
         rounds_by = {c['id']: models.get_rounds(c['id']) for c in companies}
+        flows_by = models.get_cashflows_by_company()
         import metrics as _m
-        pm = _m.portfolio_metrics(companies, rounds_by)
+        pm = _m.portfolio_metrics(companies, rounds_by,
+                                  flows_by_company=flows_by)
 
         title = QLabel(entity_name)
         title.setStyleSheet("font-size:20pt; font-weight:bold;")
@@ -187,7 +189,8 @@ class DetailPanel(QWidget):
         tbl.verticalHeader().setVisible(False)
         tbl.horizontalHeader().setStretchLastSection(True)
         for i, c in enumerate(companies):
-            met = _m.company_metrics(rounds_by.get(c['id'], []), c.get('current_valuation'))
+            met = _m.company_metrics_for(c, rounds_by.get(c['id'], []),
+                                         flows_by.get(c['id'], []))
             gain_c = met.get('gain')
             gs2    = ("+" if gain_c and gain_c >= 0 else "") + _fmt(gain_c, sym) if gain_c is not None else "n/a"
             tbl.setItem(i, 0, QTableWidgetItem(c['name']))
@@ -220,7 +223,8 @@ class DetailPanel(QWidget):
             return
         sym   = _sym()
         rounds = models.get_rounds(cid)
-        met   = m.company_metrics(rounds, c.get('current_valuation'))
+        flows = models.get_cashflows(cid)
+        met   = m.company_metrics_for(c, rounds, flows)
 
         # Remember the active tab while staying on the same company,
         # reset when switching to a different one.
@@ -275,7 +279,7 @@ class DetailPanel(QWidget):
 
         n_docs = len(models.get_documents(company_id=cid))
         tabs.addTab(ov_page, "Overview")
-        tabs.addTab(rd_page, f"Rounds ({len(rounds)})")
+        tabs.addTab(rd_page, f"Rounds & Cash flows ({len(rounds)})")
         tabs.addTab(dc_page, f"Documents ({n_docs})")
 
         # Description block
@@ -330,51 +334,31 @@ class DetailPanel(QWidget):
             no_thesis.setStyleSheet(f"color:{MUTED}; font-size:9pt;")
             ov.addWidget(no_thesis)
 
-        # Metric cards
-        ov.addWidget(SectionLabel("Investment Metrics"))
+        # Position summary: realized vs unrealized, family-office multiples.
+        # Every card's tooltip carries the footnote from metrics.py.
+        ov.addWidget(SectionLabel("Position Summary"))
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        gain = met['gain']
-        gain_color = GREEN if (gain is not None and gain >= 0) else RED if gain is not None else None
-        gain_str = "n/a"
-        if gain is not None:
-            sign = "+" if gain >= 0 else "−"
-            gain_str = f"{sign}{sym}{abs(gain):,.0f}"
+        closed_note = ("\n" + m.FOOTNOTE_CLOSED) if met['closed'] else ""
+        as_of = met.get('valuation_as_of') or 'today'
 
-        # Current price per share
-        latest_shares = None
-        for r in sorted(rounds, key=lambda x: x.get('date') or '', reverse=True):
-            if r.get('total_shares_outstanding') and r['total_shares_outstanding'] > 0:
-                latest_shares = r['total_shares_outstanding']
-                break
-        cur_pps = (c.get('current_valuation') / latest_shares
-                   if c.get('current_valuation') and latest_shares else None)
-
-        row.addWidget(MetricCard("Total Invested", _fmt(met['total_invested'], sym),
-            tooltip="Total amount of money invested in this company across all funding rounds."))
+        row.addWidget(MetricCard("Invested", _fmt(met['total_invested'], sym),
+            tooltip=m.FOOTNOTE_INVESTED))
+        realized_color = GREEN if met['realized'] else None
+        row.addWidget(MetricCard("Realized", _fmt(met['realized'], sym),
+            color=realized_color, tooltip=m.FOOTNOTE_REALIZED))
         row.addWidget(MetricCard("Current Value", _fmt(met['current_value'], sym),
-            tooltip="Our estimated current value in this company.\n"
-                    "= Our ownership % × current company valuation.\n"
-                    "Requires both a valuation and an ownership % to be set."))
-        row.addWidget(MetricCard("Gain / Loss", gain_str, _pct(met['roi']), gain_color,
-            tooltip="Profit or loss on this investment.\n"
-                    "= Current Value − Total Invested\n"
-                    "Green = we are ahead, Red = we are behind."))
+            tooltip=m.VALUATION_MEANING_FOOTNOTE + closed_note))
         row.addWidget(MetricCard("MOIC", _moic(met['moic']),
-            tooltip="MOIC = Multiple on Invested Capital.\n"
-                    "How many times your money has multiplied in this company.\n"
-                    "1.0× = broke even  |  2.0× = doubled  |  0.5× = lost half."))
+            tooltip=m.FOOTNOTE_MOIC))
+        row.addWidget(MetricCard("DPI", _moic(met['dpi']),
+            tooltip=m.FOOTNOTE_DPI))
+        row.addWidget(MetricCard("TVPI", _moic(met['tvpi']),
+            tooltip=m.FOOTNOTE_TVPI + "\n" + m.FOOTNOTE_DPI + "\n"
+                    + m.FOOTNOTE_RVPI))
         row.addWidget(MetricCard("IRR", _irr(met['irr']),
-            tooltip="IRR = Internal Rate of Return.\n"
-                    "The annualised growth rate of this investment — like an annual interest rate.\n"
-                    "25% IRR means the investment has grown at roughly 25% per year.\n"
-                    "Calculated from the dates and amounts of each funding round."))
-        if cur_pps is not None:
-            row.addWidget(MetricCard("Price / Share", _fmt(cur_pps, sym, dec=2),
-                tooltip="Current estimated price per share.\n"
-                        "= Current company valuation ÷ total shares outstanding.\n"
-                        "Compare to what we paid per share in each funding round below."))
+            tooltip=m.FOOTNOTE_IRR.format(as_of=as_of)))
         ov.addLayout(row)
 
         # ── Valuation block: history is the single source of truth ────────
@@ -391,7 +375,7 @@ class DetailPanel(QWidget):
             )
             ov.addWidget(nl)
 
-        # ── Rounds tab ────────────────────────────────────────────────────────
+        # ── Rounds & Cash flows tab ───────────────────────────────────────────
         if rounds:
             rd.addWidget(SectionLabel("Funding Rounds"))
             self._add_rounds_table(rounds, sym, target=rd)
@@ -403,6 +387,7 @@ class DetailPanel(QWidget):
             )
             no_rounds.setStyleSheet(f"color:{MUTED}; font-size:10pt;")
             rd.addWidget(no_rounds)
+        self._add_ledger(rd, cid, flows, sym)
 
         # ── Documents tab ─────────────────────────────────────────────────────
         dc.addWidget(self._doc_category_widget(
@@ -551,6 +536,159 @@ class DetailPanel(QWidget):
             subprocess.run(['open', path])
         else:
             subprocess.run(['xdg-open', path])
+
+    # ── Cash-flow ledger ──────────────────────────────────────────────────────
+
+    _FLOW_LABELS = {
+        'investment': 'Investment', 'follow_on': 'Follow-on',
+        'exit_proceeds': 'Exit proceeds', 'partial_sale': 'Partial sale',
+        'dividend': 'Dividend', 'distribution': 'Distribution',
+        'fee': 'Fee', 'other_in': 'Other (in)', 'other_out': 'Other (out)',
+    }
+
+    def _add_ledger(self, rd, cid, flows, sym):
+        """Every money movement, with running invested/realized columns.
+        Round-linked rows are edited through the round dialog only."""
+        rd.addWidget(SectionLabel("Cash Flow Ledger"))
+        if flows:
+            tbl = QTableWidget(len(flows), 6)
+            tbl.setHorizontalHeaderLabels(
+                ["Date", "Type", "Amount", "Invested →", "Realized →",
+                 "Note"])
+            tbl.verticalHeader().setVisible(False)
+            tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            tbl.setSelectionBehavior(
+                QTableWidget.SelectionBehavior.SelectRows)
+            run_inv = run_real = 0.0
+            for i, f in enumerate(flows):
+                signed = m.signed_amount(f['type'], f['amount'])
+                if signed < 0:
+                    run_inv += -signed
+                else:
+                    run_real += signed
+                note = f.get('note') or ''
+                if f.get('shares_delta'):
+                    note = (f"{f['shares_delta']:+,.0f} shares · " + note).strip(' ·')
+                cells = [
+                    f['date'] or '—',
+                    self._FLOW_LABELS.get(f['type'], f['type']),
+                    f"{'+' if signed >= 0 else '−'}{sym}{abs(signed):,.0f}",
+                    f"{sym}{run_inv:,.0f}",
+                    f"{sym}{run_real:,.0f}",
+                    note,
+                ]
+                for col, text in enumerate(cells):
+                    item = QTableWidgetItem(str(text))
+                    if col == 1:
+                        item.setForeground(QColor(
+                            RED if signed < 0 else GREEN))
+                        if f.get('round_id'):
+                            item.setToolTip('Linked to a funding round — '
+                                            'edit the round to change it.')
+                    if col == 2:
+                        item.setForeground(QColor(
+                            RED if signed < 0 else GREEN))
+                    tbl.setItem(i, col, item)
+                tbl.item(i, 0).setData(Qt.ItemDataRole.UserRole, f['id'])
+            tbl.horizontalHeader().setSectionResizeMode(
+                5, QHeaderView.ResizeMode.Stretch)
+            tbl.setMaximumHeight(min(280, 60 + 30 * len(flows)))
+            rd.addWidget(tbl)
+            self._flow_table = tbl
+        else:
+            empty = QLabel("No cash flows yet — rounds create investment "
+                           "flows automatically; dividends, exits and "
+                           "sales are added below.")
+            empty.setStyleSheet(f"color:{MUTED}; font-size:9pt;")
+            rd.addWidget(empty)
+            self._flow_table = None
+
+        btn_row = QHBoxLayout()
+        for text, slot in [
+                ("＋ Add cash flow", lambda: self._add_flow(cid)),
+                ("Edit selected", lambda: self._edit_flow(cid)),
+                ("Delete selected", lambda: self._delete_flow(cid))]:
+            b = QPushButton(text)
+            b.setStyleSheet(_SOFT_BTN_QSS)
+            b.clicked.connect(slot)
+            btn_row.addWidget(b)
+        btn_row.addStretch()
+        rd.addLayout(btn_row)
+
+    def _selected_flow(self, cid):
+        tbl = getattr(self, '_flow_table', None)
+        if tbl is None or tbl.currentRow() < 0:
+            QMessageBox.information(self, "No selection",
+                                    "Select a row in the ledger first.")
+            return None
+        fid = tbl.item(tbl.currentRow(), 0).data(Qt.ItemDataRole.UserRole)
+        return models.get_cashflow(fid)
+
+    def _add_flow(self, cid):
+        from ui.dialogs import CashflowDialog
+        dlg = CashflowDialog(self, company_id=cid)
+        if dlg.exec():
+            d = dlg.get_data()
+            models.add_cashflow(cid, d['date'], d['type'], d['amount'],
+                                shares_delta=d['shares_delta'],
+                                note=d['note'], origin='ui.cashflow_dialog')
+            if d['type'] == 'exit_proceeds':
+                self._offer_exit_status(cid)
+            self.show_company(cid)
+
+    def _edit_flow(self, cid):
+        f = self._selected_flow(cid)
+        if not f:
+            return
+        if f.get('round_id'):
+            QMessageBox.information(
+                self, "Linked to a round",
+                "This investment flow belongs to a funding round.\n"
+                "Edit the round (Rounds table above) and the flow follows "
+                "automatically.")
+            return
+        from ui.dialogs import CashflowDialog
+        dlg = CashflowDialog(self, company_id=cid, flow=f)
+        if dlg.exec():
+            models.update_cashflow(f['id'], origin='ui.cashflow_dialog',
+                                   **dlg.get_data())
+            self.show_company(cid)
+
+    def _delete_flow(self, cid):
+        f = self._selected_flow(cid)
+        if not f:
+            return
+        if f.get('round_id'):
+            QMessageBox.information(
+                self, "Linked to a round",
+                "This investment flow belongs to a funding round.\n"
+                "Delete the round instead — its flow is removed with it.")
+            return
+        if QMessageBox.question(
+                self, "Delete cash flow",
+                "Delete this cash flow? The change is recorded in the "
+                "history log.",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            models.delete_cashflow(f['id'], origin='ui.cashflow_dialog')
+            self.show_company(cid)
+
+    def _offer_exit_status(self, cid):
+        c = models.get_company(cid)
+        if not c or m.is_closed(c.get('notes')):
+            return
+        if QMessageBox.question(
+                self, "Mark as exited?",
+                "You recorded exit proceeds. Set this company's status to "
+                "Exited?\n(Unrealized value then counts as 0 — only real "
+                "proceeds remain.)",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            notes = 'Status: Exited\n' + (c.get('notes') or '')
+            models.update_company(cid, notes=notes.strip(),
+                                  origin='ui.cashflow_dialog')
 
     # ── Rounds table ──────────────────────────────────────────────────────────
 

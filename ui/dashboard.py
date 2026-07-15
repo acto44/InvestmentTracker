@@ -192,7 +192,9 @@ class DashboardTab(QWidget):
             return
 
         rounds_by = {c['id']: models.get_rounds(c['id']) for c in companies}
-        co_met    = {c['id']: m.company_metrics(rounds_by[c['id']], c.get('current_valuation'))
+        flows_by  = models.get_cashflows_by_company()
+        co_met    = {c['id']: m.company_metrics_for(
+                         c, rounds_by[c['id']], flows_by.get(c['id'], []))
                      for c in companies}
 
         # Split: companies with known valuation vs unknown
@@ -202,9 +204,13 @@ class DashboardTab(QWidget):
         total_invested      = sum(co_met[c['id']]['total_invested'] for c in companies)
         invested_of_known   = sum(co_met[c['id']]['total_invested'] for c in known)
         total_current_known = sum((co_met[c['id']]['current_value'] or 0) for c in known)
-        total_gain_known    = total_current_known - invested_of_known
+        total_realized      = sum(co_met[c['id']]['realized'] for c in companies)
+        realized_of_known   = sum(co_met[c['id']]['realized'] for c in known)
+        total_gain_known    = (total_current_known + realized_of_known) - invested_of_known
         coverage            = invested_of_known / total_invested * 100 if total_invested else 0
-        moic_known          = total_current_known / invested_of_known if invested_of_known else None
+        moic_known          = ((total_current_known + realized_of_known) / invested_of_known
+                               if invested_of_known else None)
+        tvpi_known          = moic_known    # TVPI = DPI + RVPI = MOIC (see metrics.py)
 
         # ── Since last update (all-portfolios view only) ──────────────────────
         if not self._entity_filter:
@@ -239,10 +245,13 @@ class DashboardTab(QWidget):
             tooltip="Profit or loss on companies with known valuations.\n"
                     "= Current Value − Amount Invested\n"
                     "Green = profit, Red = loss."))
-        cards.addWidget(_Card("MOIC (known)", _moic(moic_known),
-            tooltip="MOIC = Multiple on Invested Capital.\n"
-                    "Shows how many times your money has multiplied.\n"
-                    "1.0× = broke even  |  2.0× = doubled  |  0.5× = lost half.\n"
+        cards.addWidget(_Card("Realized", f"{sym} {total_realized:,.0f}",
+                              None, GREEN if total_realized else None,
+            tooltip=m.FOOTNOTE_REALIZED + "\n"
+                    "Money already back in the family's pocket — exits, "
+                    "partial sales, dividends, distributions."))
+        cards.addWidget(_Card("MOIC / TVPI (known)", _moic(tvpi_known),
+            tooltip=m.FOOTNOTE_MOIC + "\n" + m.FOOTNOTE_TVPI + "\n"
                     "Only includes companies with a known valuation."))
         cards.addWidget(_Card("Not yet valued",
                               f"{sym} {total_invested - invested_of_known:,.0f}",
@@ -266,8 +275,9 @@ class DashboardTab(QWidget):
             for c in all_cos:
                 e = c.get('entity') or 'Unassigned'
                 entities.setdefault(e, []).append(c)
-            all_co_met = {c['id']: m.company_metrics(
-                              models.get_rounds(c['id']), c.get('current_valuation'))
+            all_co_met = {c['id']: m.company_metrics_for(
+                              c, models.get_rounds(c['id']),
+                              flows_by.get(c['id'], []))
                           for c in all_cos}
 
             for ename, elist in sorted(entities.items()):

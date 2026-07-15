@@ -37,7 +37,9 @@ class FamilyImportDialog(QDialog):
             "Detected family-fund format (Investerat belopp — amounts in TKR = thousands of SEK).\n"
             "Each investment year becomes a separate round. "
             "Current valuations are read from the 'Värdering' column where available.\n"
-            "You can update ownership % and exact valuations after import."
+            "You can update ownership % and exact valuations after import.\n"
+            "Note: cash flows (dividends, exits, partial sales) are NOT part "
+            "of this format — flows recorded in the app stay untouched."
         )
         info.setWordWrap(True)
         bl.addWidget(info)

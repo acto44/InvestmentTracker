@@ -33,3 +33,30 @@ def demo_db(temp_db):
     """temp_db populated with the fictional ViFi demo portfolio."""
     seed_demo_data.seed(verbose=False)
     return temp_db
+
+
+@pytest.fixture
+def v1_db(tmp_path):
+    """A REAL v1 database built by the actual v1 schema code, populated
+    with one valued, one zero-valued and one unvalued company — for
+    migration tests (init_db() then migrates it to the current version)."""
+    path = str(tmp_path / 'test_investments.db')
+    models.set_db_path(path)
+    conn = models.get_conn()
+    models._init_schema_v1(conn)
+    conn.execute(
+        "INSERT INTO companies (name, entity, current_valuation) "
+        "VALUES ('Valued Co', 'A', 50000)")
+    conn.execute(
+        "INSERT INTO companies (name, entity, current_valuation) "
+        "VALUES ('Zero Co', 'A', 0)")
+    conn.execute(
+        "INSERT INTO companies (name, entity) VALUES ('Unvalued Co', 'A')")
+    conn.execute(
+        "INSERT INTO funding_rounds (company_id, round_name, date, "
+        "amount_invested, ownership_pct) VALUES (1, 'Seed', '2021-01-01', "
+        "1000, 100)")
+    conn.commit()
+    conn.close()
+    yield path
+    models.set_db_path(None)

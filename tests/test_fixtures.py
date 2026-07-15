@@ -42,6 +42,16 @@ def test_seed_is_idempotent(demo_db):
     assert len(models.get_all_companies()) == before
 
 
+def test_seed_refuses_populated_default_path(demo_db, monkeypatch):
+    """The safety guard: against the DEFAULT db path (possibly a live
+    family file) the seeder must refuse to replace existing data."""
+    monkeypatch.setattr(models, 'db_path_is_default', lambda: True)
+    import pytest
+    with pytest.raises(SystemExit):
+        seed_demo_data.seed(verbose=False)
+    seed_demo_data.seed(verbose=False, force=True)   # explicit override ok
+
+
 def test_fixtures_never_touch_the_live_db(temp_db):
     assert 'test_investments.db' in models.get_db_path()
     assert temp_db != os.path.join(

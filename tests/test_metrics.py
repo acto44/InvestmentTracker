@@ -37,8 +37,9 @@ def test_company_metrics_on_demo_shape(demo_db):
     import models
     companies = models.get_all_companies()
     nova = next(c for c in companies if c['name'] == 'NovaTech AI')
-    met = metrics.company_metrics(models.get_rounds(nova['id']),
-                                  nova['current_valuation'])
+    met = metrics.company_metrics_for(nova, models.get_rounds(nova['id']),
+                                      models.get_cashflows(nova['id']))
     assert met['total_invested'] == pytest.approx(6300)
     # stake = 7.1% of 220,000 = 15,620 -> MOIC ~2.48x
     assert met['moic'] == pytest.approx(2.48, abs=0.02)
+    assert met['tvpi'] == pytest.approx(met['moic'])

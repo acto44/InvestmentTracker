@@ -19,11 +19,59 @@ def _parse_date(d) -> Optional[date]:
         return None
 
 
-# Footnote shown wherever unrealized value appears (CLAUDE.md: MONEY —
-# every metric must be able to state its assumptions). The value fed into
-# company_metrics comes from models.get_current_valuation().
+# ── Sign convention (CLAUDE.md: SIGN CONVENTION) ─────────────────────────────
+# Cash-flow amounts are STORED positive; direction derives from the type,
+# here and only here. Outflows leave the family's pocket.
+
+OUTFLOW_TYPES = frozenset({'investment', 'follow_on', 'fee', 'other_out'})
+INFLOW_TYPES = frozenset({'exit_proceeds', 'partial_sale', 'dividend',
+                          'distribution', 'other_in'})
+
+
+def signed_amount(flow_type: str, amount: float) -> float:
+    """The single place where direction is decided. Every computation and
+    every display goes through this helper."""
+    if flow_type in OUTFLOW_TYPES:
+        return -abs(amount or 0)
+    if flow_type in INFLOW_TYPES:
+        return abs(amount or 0)
+    raise ValueError(f'unknown cashflow type: {flow_type!r}')
+
+
+def is_closed(notes: str) -> bool:
+    """A company whose status is Exited or Bankrupt holds no position any
+    more: unrealized value is 0 by definition (the valuation history keeps
+    the record). Uses the existing notes-based status semantics."""
+    n = (notes or '').lower()
+    return 'status: exited' in n or 'bankrupt' in n
+
+
+# ── Footnotes (CLAUDE.md: MONEY — every metric states its assumptions;
+#    these strings live next to the math and nowhere else) ────────────────────
 UNREALIZED_VALUE_FOOTNOTE = ("Current value = latest recorded valuation "
                              "(as of {date}, source: {source}).")
+VALUATION_MEANING_FOOTNOTE = (
+    "Recorded valuations are the WHOLE company's value; the position "
+    "value shown = valuation × our ownership %.")
+FOOTNOTE_INVESTED = ("Invested = every outflow in the ledger: rounds, "
+                     "follow-ons and fees.")
+FOOTNOTE_REALIZED = ("Realized = money actually received: exits, partial "
+                     "sales, dividends and distributions.")
+FOOTNOTE_MOIC = ("MOIC = (realized + unrealized) / invested. Equals TVPI. "
+                 "Fees are included as outflows.")
+FOOTNOTE_DPI = ("DPI = realized / invested — the portion of your money "
+                "already back in your pocket.")
+FOOTNOTE_RVPI = ("RVPI = unrealized / invested — the portion still riding "
+                 "on the latest valuation.")
+FOOTNOTE_TVPI = "TVPI = DPI + RVPI."
+FOOTNOTE_IRR = ("IRR assumes the current valuation were realized on "
+                "{as_of}. Day-count: actual/365.25. Fees are included as "
+                "outflows.")
+FOOTNOTE_CLOSED = ("Position closed (exited/written off): unrealized "
+                   "value is 0; only realized proceeds count.")
+FOOTNOTE_OWNERSHIP_AFTER_SALE = (
+    "Ownership after partial sales = last recorded ownership × share of "
+    "originally received shares still held.")
 
 
 def roi(invested: float, current_value: float) -> Optional[float]:
@@ -92,17 +140,27 @@ def irr(dated_flows: List[Tuple[str, float]], today: Optional[date] = None) -> O
     if abs(f(r)) < 1e-4:
         return r
 
-    # Bisection fallback
-    lo, hi = -0.9999, 20.0
-    if f(lo) * f(hi) > 0:
+    # Bisection fallback. With multiple sign changes several mathematical
+    # IRRs can exist — scan a grid ordered by |rate| and bisect the first
+    # bracket found, so the root closest to zero is reported.
+    grid = [0.0, 0.05, -0.05, 0.1, -0.1, 0.25, -0.25, 0.5, -0.5,
+            1.0, -0.75, 2.0, -0.9, 5.0, -0.99, 10.0, 20.0]
+    bracket = None
+    for a, b in zip(grid, grid[1:]):
+        lo, hi = min(a, b), max(a, b)
+        if f(lo) * f(hi) <= 0:
+            bracket = (lo, hi)
+            break
+    if bracket is None:
         return None
+    lo, hi = bracket
     for _ in range(300):
         mid = (lo + hi) / 2
         if f(lo) * f(mid) <= 0:
             hi = mid
         else:
             lo = mid
-        if hi - lo < 1e-9:
+        if hi - lo < 1e-12:
             break
     r = (lo + hi) / 2
 
@@ -110,80 +168,145 @@ def irr(dated_flows: List[Tuple[str, float]], today: Optional[date] = None) -> O
 
 
 def company_metrics(rounds: list, current_valuation: Optional[float],
-                    today: Optional[date] = None) -> dict:
-    """Compute aggregated metrics for one company."""
+                    today: Optional[date] = None,
+                    cashflows: Optional[list] = None,
+                    valuation_as_of: Optional[str] = None,
+                    closed: bool = False) -> dict:
+    """Aggregated metrics for one company.
+
+    Money movement comes ONLY from `cashflows` (the ledger) — never from
+    round.amount_invested directly. `current_valuation` is the WHOLE
+    company's value (see VALUATION_MEANING_FOOTNOTE); `closed` means the
+    position is exited/written off, so unrealized value is 0."""
     if today is None:
         today = date.today()
+    cashflows = cashflows or []
 
-    total_invested = sum((r.get('amount_invested') or 0) for r in rounds)
+    invested = sum(f['amount'] for f in cashflows
+                   if f['type'] in OUTFLOW_TYPES)
+    realized = sum(f['amount'] for f in cashflows
+                   if f['type'] in INFLOW_TYPES)
 
-    # Most recent round that has an ownership figure
+    # Ownership: most recent round with a figure, scaled down when
+    # partial sales reduced the originally received shares
+    # (FOOTNOTE_OWNERSHIP_AFTER_SALE).
     ownership = None
     for r in sorted(rounds, key=lambda x: x.get('date') or '', reverse=True):
         if r.get('ownership_pct') is not None:
             ownership = r['ownership_pct']
             break
+    shares_from_rounds = sum((r.get('shares_received') or 0) for r in rounds)
+    shares_delta = sum((f.get('shares_delta') or 0) for f in cashflows)
+    if ownership is not None and shares_from_rounds > 0 and shares_delta:
+        factor = max(0.0, (shares_from_rounds + shares_delta)
+                     / shares_from_rounds)
+        ownership = ownership * factor
 
-    current_value = None
-    if ownership is not None and current_valuation is not None:
-        current_value = (ownership / 100) * current_valuation
+    # Unrealized position value
+    if closed:
+        unrealized = 0.0
+    elif ownership is not None and current_valuation is not None:
+        unrealized = (ownership / 100) * current_valuation
+    else:
+        unrealized = None
 
     gain = roi_val = moic_val = irr_val = None
-    if current_value is not None and total_invested > 0:
-        gain = current_value - total_invested
-        roi_val = roi(total_invested, current_value)
-        moic_val = moic(total_invested, current_value)
+    dpi = rvpi = tvpi = None
+    if invested > 0:
+        dpi = realized / invested
+        if unrealized is not None:
+            rvpi = unrealized / invested
+            tvpi = dpi + rvpi
+            moic_val = (realized + unrealized) / invested
+            gain = (realized + unrealized) - invested
+            roi_val = roi(invested, realized + unrealized)
 
-        flows = [(r.get('date') or today.isoformat(), -(r.get('amount_invested') or 0))
-                 for r in rounds if r.get('amount_invested')]
-        flows.append((today.isoformat(), current_value))
-        irr_val = irr(flows, today)
+    signed = [(f['date'] or today.isoformat(),
+               signed_amount(f['type'], f['amount'])) for f in cashflows]
+    if unrealized is not None and unrealized > 0:
+        signed.append((valuation_as_of or today.isoformat(), unrealized))
+    if len(signed) >= 2:
+        irr_val = irr(signed, today)
 
     return {
-        'total_invested': total_invested,
-        'current_value': current_value,
+        'total_invested': invested,
+        'realized': realized,
+        'current_value': unrealized,
         'gain': gain,
         'roi': roi_val,
         'moic': moic_val,
+        'dpi': dpi,
+        'rvpi': rvpi,
+        'tvpi': tvpi,
         'irr': irr_val,
         'ownership': ownership,
+        'closed': closed,
+        'valuation_as_of': valuation_as_of,
     }
 
 
+def company_metrics_for(company: dict, rounds: list, cashflows: list,
+                        today: Optional[date] = None) -> dict:
+    """Convenience wrapper: pulls valuation/as-of/closed from an enriched
+    company dict (models.get_all_companies attaches those keys)."""
+    return company_metrics(rounds, company.get('current_valuation'), today,
+                           cashflows=cashflows,
+                           valuation_as_of=company.get('valuation_as_of'),
+                           closed=is_closed(company.get('notes')))
+
+
 def portfolio_metrics(companies: list, rounds_by_company: dict,
-                      today: Optional[date] = None) -> dict:
-    """Aggregate metrics across the whole portfolio."""
+                      today: Optional[date] = None,
+                      flows_by_company: Optional[dict] = None) -> dict:
+    """Aggregate metrics across the whole portfolio. Money movement comes
+    from the ledger (flows_by_company); portfolio IRR is date-true over
+    every signed flow plus today's total unrealized value."""
     if today is None:
         today = date.today()
 
     all_flows: List[Tuple[str, float]] = []
     total_invested = 0.0
+    total_realized = 0.0
     total_current = 0.0
     has_current = False
 
     for c in companies:
         rounds = rounds_by_company.get(c['id'], [])
-        met = company_metrics(rounds, c.get('current_valuation'), today)
+        flows = (flows_by_company or {}).get(c['id'], [])
+        met = company_metrics(rounds, c.get('current_valuation'), today,
+                              cashflows=flows,
+                              valuation_as_of=c.get('valuation_as_of'),
+                              closed=is_closed(c.get('notes')))
         total_invested += met['total_invested']
+        total_realized += met['realized']
         if met['current_value'] is not None:
             total_current += met['current_value']
             has_current = True
-        for r in rounds:
-            amt = r.get('amount_invested')
-            if amt:
-                all_flows.append((r.get('date') or today.isoformat(), -amt))
+        for f in flows:
+            all_flows.append((f['date'] or today.isoformat(),
+                              signed_amount(f['type'], f['amount'])))
 
-    if has_current:
+    if has_current and total_current > 0:
         all_flows.append((today.isoformat(), total_current))
 
     irr_val = irr(all_flows, today) if len(all_flows) >= 2 else None
 
+    dpi = (total_realized / total_invested) if total_invested else None
+    rvpi = (total_current / total_invested) \
+        if total_invested and has_current else None
+    tvpi = (dpi + rvpi) if dpi is not None and rvpi is not None else None
+    total_value = total_realized + total_current
+
     return {
         'total_invested': total_invested,
+        'total_realized': total_realized,
         'total_current': total_current if has_current else None,
-        'gain': (total_current - total_invested) if has_current else None,
-        'roi': roi(total_invested, total_current) if has_current and total_invested else None,
-        'moic': moic(total_invested, total_current) if has_current and total_invested else None,
+        'gain': (total_value - total_invested) if has_current else None,
+        'roi': roi(total_invested, total_value) if has_current and total_invested else None,
+        'moic': moic(total_invested, total_value) if has_current and total_invested else None,
+        'dpi': dpi,
+        'rvpi': rvpi,
+        'tvpi': tvpi,
         'irr': irr_val,
     }
 

@@ -23,6 +23,16 @@ class ImportPreviewDialog(QDialog):
         self._info = QLabel()
         layout.addWidget(self._info)
 
+        # honest scope statement — no silent data loss on a round-trip
+        scope = QLabel(
+            "ℹ  This import covers companies and rounds only. Cash flows "
+            "(dividends, exits, partial sales, fees) are NOT imported — "
+            "flows already recorded in the app stay untouched, and the "
+            "Cashflows sheet in exports is for reading, not re-importing.")
+        scope.setWordWrap(True)
+        scope.setStyleSheet("color: #FBBF24; font-size: 9pt;")
+        layout.addWidget(scope)
+
         conflict_row = QHBoxLayout()
         conflict_row.addWidget(QLabel("If a round already exists:"))
         self._update_rb = QRadioButton("Update existing")

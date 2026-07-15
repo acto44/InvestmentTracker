@@ -1,7 +1,7 @@
 """
 Populates investments.db with fictional demo companies for showcase purposes.
 Safe to commit — contains no real financial data.
-Run:  python seed_demo_data.py
+Run:  python seed_demo_data.py          (add --yes to replace existing data)
 
 Current value = ownership_pct × company_valuation (see metrics.py).
 Company valuations below represent total company worth, not just our stake.
@@ -19,12 +19,27 @@ def add(name, entity, sector, invest_type, valuation, date, description, thesis,
     return cid
 
 
-def seed(verbose=True):
+def seed(verbose=True, force=False):
     """Populate the CURRENT database (models.get_db_path()) with the
     demo portfolio. Idempotent. Tests point models at a temp database
-    via models.set_db_path() first; `python seed_demo_data.py` keeps
-    the original behavior."""
+    via models.set_db_path() first.
+
+    SAFETY GUARD (CLAUDE.md: PRIVACY): this script REPLACES all companies
+    and rounds. Against the default database path (i.e. possibly a live
+    file) it refuses to run when data exists, unless force=True
+    (--yes on the command line)."""
     models.init_db()
+
+    if not force and models.db_path_is_default():
+        conn = models.get_conn()
+        n = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+        conn.close()
+        if n:
+            raise SystemExit(
+                f"seed_demo_data: the database at {models.get_db_path()} "
+                f"already contains {n} companies, and this script REPLACES "
+                "everything in it. If that is really what you want, run:\n"
+                "    python seed_demo_data.py --yes")
 
     # Clear existing data so the script is idempotent
     conn = models.get_conn()
@@ -145,6 +160,21 @@ def seed(verbose=True):
     #   For fund investments ownership_pct=100 so current_value = NAV directly.
     #   Invested 10,000, NAV 16,000 → MOIC 1.6×
 
+    # DataPulse pays dividends — demo for income flows
+    models.add_cashflow(datapulse, '2023-03-01', 'dividend', 120,
+                        note='FY22 dividend', origin='app')
+    models.add_cashflow(datapulse, '2024-03-01', 'dividend', 150,
+                        note='FY23 dividend', origin='app')
+
+    # BioVance partial sale — demo for share sales & ownership reduction
+    models.add_cashflow(biovance, '2024-09-01', 'partial_sale', 1600,
+                        shares_delta=-5000,
+                        note='secondary sale to co-investor', origin='app')
+
+    # Wintex full exit — demo for realized proceeds (status already Exited)
+    models.add_cashflow(wintex, '2024-06-30', 'exit_proceeds', 26520,
+                        note='acquisition by Nordic bank', origin='app')
+
     nordic_vc = add(
         "Nordic Growth Fund II", "Portfolio B", "Fund", "ViFi Fund",
         16_000, "2020-01-01",
@@ -199,7 +229,8 @@ def seed(verbose=True):
 
     for c in companies:
         rounds   = models.get_rounds(c['id'])
-        met      = m.company_metrics(rounds, c.get('current_valuation'))
+        met      = m.company_metrics_for(c, rounds,
+                                         models.get_cashflows(c['id']))
         invested = met['total_invested']
         cv       = met['current_value']
         moic_val = met['moic']
@@ -218,4 +249,5 @@ def seed(verbose=True):
 
 
 if __name__ == "__main__":
-    seed()
+    import sys
+    seed(force='--yes' in sys.argv)

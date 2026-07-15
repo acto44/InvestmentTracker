@@ -22,6 +22,11 @@ def set_db_path(path):
     global _DB_PATH_OVERRIDE
     _DB_PATH_OVERRIDE = path
 
+def db_path_is_default() -> bool:
+    """True when no override is active — i.e. we are pointing at the
+    live database next to the app (see seed_demo_data's safety guard)."""
+    return _DB_PATH_OVERRIDE is None
+
 def get_db_path():
     if _DB_PATH_OVERRIDE:
         return _DB_PATH_OVERRIDE
@@ -158,7 +163,41 @@ def _migrate_v2(conn):
                 "ALTER TABLE companies DROP COLUMN current_valuation")
 
 
-MIGRATIONS = [(2, _migrate_v2)]
+def _migrate_v3(conn):
+    """Cash-flow ledger: every money movement gets a first-class home.
+    Amounts are stored POSITIVE; direction comes from the type via
+    metrics.signed_amount() (see CLAUDE.md: SIGN CONVENTION). Backfills
+    one 'investment' flow per existing round."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS cashflows (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            round_id INTEGER REFERENCES funding_rounds(id) ON DELETE SET NULL,
+            date TEXT NOT NULL,
+            type TEXT NOT NULL CHECK(type IN (
+                'investment','follow_on','exit_proceeds','partial_sale',
+                'dividend','distribution','fee','other_in','other_out')),
+            amount REAL NOT NULL CHECK(amount > 0),
+            shares_delta REAL,
+            note TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cashflows_company_date
+            ON cashflows(company_id, date);
+    """)
+    now = _utcnow()
+    for r in conn.execute(
+            "SELECT id, company_id, date, amount_invested FROM "
+            "funding_rounds WHERE amount_invested IS NOT NULL "
+            "AND amount_invested > 0").fetchall():
+        conn.execute(
+            "INSERT INTO cashflows (company_id, round_id, date, type, "
+            "amount, note, created_at) VALUES (?,?,?,?,?,?,?)",
+            (r['company_id'], r['id'], r['date'] or '', 'investment',
+             r['amount_invested'], 'backfilled from funding round', now))
+
+
+MIGRATIONS = [(2, _migrate_v2), (3, _migrate_v3)]
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
 
 
@@ -597,6 +636,17 @@ def add_round(company_id, round_name='', date='', amount_invested=None,
         _audit(conn, 'funding_rounds', rid, 'insert',
                _diff({}, {k: v for k, v in fields.items() if v not in (None, '')}),
                origin, company_id=company_id)
+        # write-through: the round's money movement lives in the ledger
+        if amount_invested and amount_invested > 0:
+            fc = conn.execute(
+                "INSERT INTO cashflows (company_id, round_id, date, type, "
+                "amount, note, created_at) VALUES (?,?,?,?,?,?,?)",
+                (company_id, rid, date or '', 'investment',
+                 amount_invested, f'round {round_name}'.strip(), _utcnow()))
+            _audit(conn, 'cashflows', fc.lastrowid, 'insert',
+                   _diff({}, {'date': date, 'type': 'investment',
+                              'amount': amount_invested, 'round_id': rid}),
+                   origin, company_id=company_id)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -627,6 +677,34 @@ def update_round(round_id, origin='app', **kwargs):
         if changes:
             _audit(conn, 'funding_rounds', round_id, 'update', changes,
                    origin, company_id=old['company_id'])
+        # write-through: keep the linked investment flow in sync
+        new_amount = kwargs.get('amount_invested',
+                                old.get('amount_invested'))
+        new_date = kwargs.get('date', old.get('date'))
+        flow = conn.execute(
+            "SELECT * FROM cashflows WHERE round_id=? AND "
+            "type='investment'", (round_id,)).fetchone()
+        if flow and new_amount and new_amount > 0:
+            flow = dict(flow)
+            fl_changes = _diff(flow, {'amount': new_amount,
+                                      'date': new_date or ''})
+            if fl_changes:
+                conn.execute(
+                    "UPDATE cashflows SET amount=?, date=? WHERE id=?",
+                    (new_amount, new_date or '', flow['id']))
+                _audit(conn, 'cashflows', flow['id'], 'update',
+                       fl_changes, origin, company_id=old['company_id'])
+        elif not flow and new_amount and new_amount > 0:
+            fc = conn.execute(
+                "INSERT INTO cashflows (company_id, round_id, date, type, "
+                "amount, note, created_at) VALUES (?,?,?,?,?,?,?)",
+                (old['company_id'], round_id, new_date or '', 'investment',
+                 new_amount, 'created when round gained an amount',
+                 _utcnow()))
+            _audit(conn, 'cashflows', fc.lastrowid, 'insert',
+                   _diff({}, {'date': new_date, 'type': 'investment',
+                              'amount': new_amount, 'round_id': round_id}),
+                   origin, company_id=old['company_id'])
         conn.commit()
     except Exception:
         conn.rollback()
@@ -635,15 +713,24 @@ def update_round(round_id, origin='app', **kwargs):
     conn.close()
 
 def clear_rounds(company_id, origin='app'):
-    """Delete all funding rounds for a company (used before re-importing year data)."""
+    """Delete all funding rounds for a company (used before re-importing
+    year data). Their linked investment flows go with them (write-through)."""
     conn = get_conn()
     try:
         n = conn.execute("SELECT COUNT(*) FROM funding_rounds WHERE company_id=?",
                          (company_id,)).fetchone()[0]
+        nf = conn.execute(
+            "SELECT COUNT(*) FROM cashflows WHERE company_id=? AND "
+            "type='investment' AND round_id IS NOT NULL",
+            (company_id,)).fetchone()[0]
+        conn.execute(
+            "DELETE FROM cashflows WHERE company_id=? AND "
+            "type='investment' AND round_id IS NOT NULL", (company_id,))
         conn.execute("DELETE FROM funding_rounds WHERE company_id=?", (company_id,))
         if n:
             _audit(conn, 'funding_rounds', None, 'delete',
-                   [{'field': 'rounds_deleted', 'old': n, 'new': None}],
+                   [{'field': 'rounds_deleted', 'old': n, 'new': None},
+                    {'field': 'linked_flows_deleted', 'old': nf, 'new': None}],
                    origin, company_id=company_id)
         conn.commit()
     except Exception:
@@ -661,6 +748,16 @@ def delete_round(round_id, origin='app'):
             conn.close()
             return
         old = dict(old)
+        # write-through: the linked investment flow leaves with the round
+        flow = conn.execute(
+            "SELECT id FROM cashflows WHERE round_id=? AND "
+            "type='investment'", (round_id,)).fetchone()
+        if flow:
+            conn.execute("DELETE FROM cashflows WHERE id=?", (flow['id'],))
+            _audit(conn, 'cashflows', flow['id'], 'delete',
+                   [{'field': 'linked_to_round', 'old': round_id,
+                     'new': None}],
+                   origin, company_id=old['company_id'])
         conn.execute("DELETE FROM funding_rounds WHERE id=?", (round_id,))
         _audit(conn, 'funding_rounds', round_id, 'delete',
                [{'field': k, 'old': _trunc(v), 'new': None}
@@ -673,6 +770,165 @@ def delete_round(round_id, origin='app'):
         conn.close()
         raise
     conn.close()
+
+# ── Cash-flow ledger ──────────────────────────────────────────────────────────
+# ALL money movement lives here (single source of truth). Amounts stored
+# POSITIVE; direction derives from type via metrics.signed_amount().
+# Investment flows are round-linked and write-through: the round mutators
+# above/below keep exactly one linked flow in the SAME transaction —
+# public cashflow functions refuse to touch round-linked rows.
+
+CASHFLOW_TYPES = ('investment', 'follow_on', 'exit_proceeds',
+                  'partial_sale', 'dividend', 'distribution', 'fee',
+                  'other_in', 'other_out')
+
+
+def get_cashflows(company_id):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM cashflows WHERE company_id=? ORDER BY date, id",
+        (company_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_cashflow(cashflow_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM cashflows WHERE id=?",
+                       (cashflow_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_cashflows_by_company() -> dict:
+    """{company_id: [flow, ...]} in one query — for dashboards/exports."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM cashflows ORDER BY date, id").fetchall()
+    conn.close()
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r['company_id'], []).append(dict(r))
+    return out
+
+
+def get_cashflow_for_round(round_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM cashflows WHERE round_id=? AND type='investment'",
+        (round_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def shares_held(company_id) -> float:
+    """Shares currently held = Σ shares_received from rounds
+    + Σ shares_delta from flows (sales carry negative deltas)."""
+    conn = get_conn()
+    from_rounds = conn.execute(
+        "SELECT COALESCE(SUM(shares_received), 0) FROM funding_rounds "
+        "WHERE company_id=?", (company_id,)).fetchone()[0]
+    from_flows = conn.execute(
+        "SELECT COALESCE(SUM(shares_delta), 0) FROM cashflows "
+        "WHERE company_id=?", (company_id,)).fetchone()[0]
+    conn.close()
+    return (from_rounds or 0) + (from_flows or 0)
+
+
+def add_cashflow(company_id, date, type, amount, round_id=None,
+                 shares_delta=None, note='', origin='app'):
+    if type not in CASHFLOW_TYPES:
+        raise ValueError(f'unknown cashflow type: {type!r}')
+    if not amount or amount <= 0:
+        raise ValueError('amount must be positive; direction comes from '
+                         'the type (see CLAUDE.md: SIGN CONVENTION)')
+    if type == 'partial_sale' and shares_delta:
+        held = shares_held(company_id)
+        if -shares_delta > held + 1e-9:
+            raise ValueError(
+                f'cannot sell {-shares_delta:,.0f} shares — only '
+                f'{held:,.0f} held')
+    conn = get_conn()
+    try:
+        c = conn.execute(
+            "INSERT INTO cashflows (company_id, round_id, date, type, "
+            "amount, shares_delta, note, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (company_id, round_id, date, type, amount, shares_delta,
+             note, _utcnow()))
+        fid = c.lastrowid
+        _audit(conn, 'cashflows', fid, 'insert',
+               _diff({}, {'date': date, 'type': type, 'amount': amount,
+                          'shares_delta': shares_delta, 'note': note,
+                          'round_id': round_id}),
+               origin, company_id=company_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+    return fid
+
+
+def update_cashflow(cashflow_id, origin='app', **kwargs):
+    if not kwargs:
+        return
+    if 'type' in kwargs and kwargs['type'] not in CASHFLOW_TYPES:
+        raise ValueError(f"unknown cashflow type: {kwargs['type']!r}")
+    conn = get_conn()
+    try:
+        old = conn.execute("SELECT * FROM cashflows WHERE id=?",
+                           (cashflow_id,)).fetchone()
+        if not old:
+            conn.close()
+            return
+        old = dict(old)
+        if old['round_id'] is not None:
+            raise ValueError(
+                'this flow is linked to a funding round — edit the round '
+                'instead, and the flow follows automatically')
+        fields = ', '.join(f"{k}=?" for k in kwargs)
+        conn.execute(f"UPDATE cashflows SET {fields} WHERE id=?",
+                     [*kwargs.values(), cashflow_id])
+        changes = _diff(old, kwargs)
+        if changes:
+            _audit(conn, 'cashflows', cashflow_id, 'update', changes,
+                   origin, company_id=old['company_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+
+
+def delete_cashflow(cashflow_id, origin='app'):
+    conn = get_conn()
+    try:
+        old = conn.execute("SELECT * FROM cashflows WHERE id=?",
+                           (cashflow_id,)).fetchone()
+        if not old:
+            conn.close()
+            return
+        old = dict(old)
+        if old['round_id'] is not None:
+            raise ValueError(
+                'this flow is linked to a funding round — delete the '
+                'round instead (its flow is removed with it)')
+        conn.execute("DELETE FROM cashflows WHERE id=?", (cashflow_id,))
+        _audit(conn, 'cashflows', cashflow_id, 'delete',
+               [{'field': k, 'old': _trunc(v), 'new': None}
+                for k, v in old.items()
+                if k not in ('id', 'company_id') and v not in (None, '')],
+               origin, company_id=old['company_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+
 
 # ── Documents ─────────────────────────────────────────────────────────────────
 
@@ -803,14 +1059,17 @@ def _run_thesis_migration():
 def get_snapshot():
     import json
     from datetime import date as _date
+    from metrics import OUTFLOW_TYPES   # money movement comes from the ledger
     companies = get_all_companies()
+    flows_by = get_cashflows_by_company()
     snap_companies = {}
     total_inv_known = 0.0
     total_val_known = 0.0
 
     for c in companies:
         rounds = get_rounds(c['id'])
-        invested = sum((r.get('amount_invested') or 0) for r in rounds)
+        invested = sum(f['amount'] for f in flows_by.get(c['id'], [])
+                       if f['type'] in OUTFLOW_TYPES)
         val = c.get('current_valuation')
 
         current_value = None
