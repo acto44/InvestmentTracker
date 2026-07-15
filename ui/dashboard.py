@@ -56,19 +56,23 @@ def _pct(val):
 class _Card(QFrame):
     def __init__(self, title, value, subtitle=None, value_color=None, min_w=160, tooltip=None):
         super().__init__()
+        from ui.styles import BORDER_SOFT
         self.setStyleSheet(f"""
             QFrame {{
-                background:{CARD}; border:1px solid {BORDER}; border-radius:10px;
+                background: qlineargradient(x1:0, y1:0, x2:0.4, y2:1,
+                    stop:0 {CARD_ALT}, stop:1 {CARD});
+                border:1px solid {BORDER_SOFT}; border-radius:14px;
             }}
         """)
         if tooltip:
             self.setToolTip(tooltip)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
-        lay.setSpacing(3)
+        lay.setContentsMargins(18, 15, 18, 15)
+        lay.setSpacing(4)
 
-        t = QLabel(title)
-        t.setStyleSheet(f"color:{MUTED}; font-size:9pt; border:none;")
+        t = QLabel(str(title).upper())
+        t.setStyleSheet(f"color:{MUTED}; font-size:8pt; font-weight:600; "
+                        f"border:none;")
         lay.addWidget(t)
 
         v = QLabel(str(value))
@@ -88,12 +92,13 @@ class _Card(QFrame):
 
 class _SectionTitle(QLabel):
     def __init__(self, text):
-        super().__init__(text)
+        super().__init__(str(text).upper())
         f = QFont()
         f.setBold(True)
-        f.setPointSize(11)
+        f.setPointSize(9)
         self.setFont(f)
-        self.setStyleSheet(f"color:{TEXT}; margin-top:6px;")
+        self.setStyleSheet(f"color:{MUTED}; border-left:3px solid {ACCENT}; "
+                           f"padding-left:9px; margin-top:10px;")
 
 
 class _MiniTable(QFrame):
@@ -559,7 +564,7 @@ class DashboardTab(QWidget):
 
         # Lightness-staggered so adjacent slices stay distinct under CVD;
         # every slice also carries a direct text label (identity is never color-alone).
-        palette = ['#3B82F6', '#93C5FD', '#A78BFA', '#FBBF24', '#22D3EE', '#F472B6']
+        palette = ['#6C8CFF', '#7A5AF8', '#22D3EE', '#4ADE80', '#FBBF24', '#F472B6']
         colors  = [palette[i % len(palette)] for i in range(len(names))]
         if names[-1] == 'Other':
             colors[-1] = '#475569'
@@ -683,7 +688,7 @@ class DashboardTab(QWidget):
             if active:
                 return (f"QPushButton {{ background:{ACCENT}; color:white; border:none; "
                         f"border-radius:6px; padding:5px 16px; font-weight:bold; font-size:9pt; }}"
-                        f"QPushButton:hover {{ background:#2563EB; }}")
+                        f"QPushButton:hover {{ background:{ACCENT}; }}")
             return (f"QPushButton {{ background:{CARD}; color:{TEXT}; "
                     f"border:1px solid {BORDER}; border-radius:6px; "
                     f"padding:5px 16px; font-size:9pt; }}"
@@ -961,6 +966,7 @@ class DashboardTab(QWidget):
             item = self._layout.takeAt(0)
             w    = item.widget()
             if w:
+                w.setParent(None)   # vanish NOW, not on deferred delete
                 w.deleteLater()
             elif item.layout():
                 self._clear_layout(item.layout())
@@ -970,6 +976,7 @@ class DashboardTab(QWidget):
             item = layout.takeAt(0)
             w    = item.widget()
             if w:
+                w.setParent(None)
                 w.deleteLater()
             elif item.layout():
                 self._clear_layout(item.layout())

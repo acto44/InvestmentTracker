@@ -1,33 +1,49 @@
-# ── Dark "fintech" palette ────────────────────────────────────────────────────
-# Deep-navy surfaces, bright accent blue, luminous green/red for gains/losses.
+# ── "Soft deep-space" design system (session 9 SUPERDESIGN pass) ─────────────
+# Design spec lives in .superdesign/design_iterations/tracker_theme_1.html
+# (gitignored). Soft indigo-black surfaces, hairline alpha borders, one
+# electric blue→violet gradient for primary actions, pill tabs, generous
+# radii. Every widget styles through THESE tokens — no stray hexes.
 
-ACCENT        = "#3B82F6"   # bright blue
-ACCENT_HOVER  = "#2563EB"
-ACCENT_ACTIVE = "#1D4ED8"
-ACCENT_LITE   = "#1C2A45"   # subtle accent-tinted surface
+ACCENT        = "#7C93FF"   # soft periwinkle — links, active states, titles
+ACCENT_HOVER  = "#93A7FF"
+ACCENT_ACTIVE = "#6478E8"
+ACCENT_LITE   = "#1A2340"   # accent-tinted surface (badges, selection)
 
-BG        = "#0B1220"       # window background (deep navy)
-CARD      = "#141D2E"       # raised surface
-CARD_ALT  = "#18233A"       # alternate table rows
-HOVER     = "#1D2A42"       # hover surface
-TEXT      = "#E6EDF7"
-MUTED     = "#8CA3C4"
-BORDER    = "#243450"
+GRAD_A        = "#4E6EF2"   # primary-button gradient: electric blue →
+GRAD_B        = "#7A5AF8"   # → violet
+GRAD_A_HOVER  = "#5D7BFF"
+GRAD_B_HOVER  = "#8A6CFF"
+GRAD_A_DOWN   = "#4460D9"
+GRAD_B_DOWN   = "#6A4CE0"
+
+BG        = "#070B16"       # window base (near-black indigo)
+BG_TOP    = "#0B1226"       # gradient top
+CARD      = "#101830"       # raised surface
+CARD_ALT  = "#16203C"       # alternate rows / gradient start
+HOVER     = "#1A2542"       # hover surface
+INPUT_BG  = "#0D1428"       # fields sit slightly below the cards
+TEXT      = "#EAEFFC"
+MUTED     = "#8CA0C8"
+BORDER    = "#22304F"       # hex twin of BORDER_SOFT (matplotlib needs hex)
+
+# hairline alpha borders — the "soft" in soft deep-space
+BORDER_SOFT    = "rgba(124,147,255,0.14)"
+BORDER_SOFT_HI = "rgba(124,147,255,0.30)"
 
 GREEN     = "#4ADE80"
-RED       = "#F87171"
+RED       = "#FB7185"       # softer rose than the old #F87171
 AMBER     = "#FBBF24"
 
-HEADER_BG = "#0D1526"       # table headers / menu bar
-HEADER_FG = "#C9D6EA"
+HEADER_BG = "#0C1224"       # toolbar / menu bar / status bar
+HEADER_FG = "#C6D2F0"
 
 # Soft tinted backgrounds (row highlights, badges, callouts)
-GREEN_SOFT = "#12291C"
-RED_SOFT   = "#2C181C"
+GREEN_SOFT = "#0F2A1D"
+RED_SOFT   = "#2C1620"
 AMBER_SOFT = "#2A2110"
 
 # Informational callout (dashboard "since last update")
-INFO_BG     = "#10233B"
+INFO_BG     = "#0F2036"
 INFO_BORDER = "#1E3A5F"
 INFO_TEXT   = "#7DD3FC"
 
@@ -37,61 +53,74 @@ WARN_BORDER = "#57431A"
 WARN_TEXT   = "#FCD34D"
 
 # Soft secondary buttons (e.g. "Open website", "Edit", "Open")
-SOFT_BTN_BG     = "#1C2A45"
-SOFT_BTN_BORDER = "#2B4066"
-SOFT_BTN_TEXT   = "#7EB0FA"
-SOFT_BTN_HOVER  = "#233657"
+SOFT_BTN_BG     = "#1A2340"
+SOFT_BTN_BORDER = "#2A3A66"
+SOFT_BTN_TEXT   = "#9FB2FF"
+SOFT_BTN_HOVER  = "#22305A"
 
 # Semantic company-status colors (used by tree, dashboard, compare)
 STATUS_ACTIVE   = GREEN
 STATUS_EXITED   = MUTED
 STATUS_BANKRUPT = RED
 
+# The one primary-action gradient, reused anywhere a widget needs it inline
+GRADIENT = (f"qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            f"stop:0 {GRAD_A}, stop:1 {GRAD_B})")
+_GRADIENT_HOVER = (f"qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+                   f"stop:0 {GRAD_A_HOVER}, stop:1 {GRAD_B_HOVER})")
+_GRADIENT_DOWN = (f"qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+                  f"stop:0 {GRAD_A_DOWN}, stop:1 {GRAD_B_DOWN})")
+_BG_GRADIENT = (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                f"stop:0 {BG_TOP}, stop:1 {BG})")
+
 QSS = f"""
 QMainWindow, QDialog {{
-    background: {BG};
+    background: {_BG_GRADIENT};
 }}
 QWidget {{
-    font-family: 'Segoe UI', Arial, sans-serif;
+    font-family: 'Segoe UI Variable Text', 'Segoe UI', Arial, sans-serif;
     font-size: 10pt;
     color: {TEXT};
 }}
 QLabel {{ background: transparent; }}
-/* ── Tabs ── */
+/* ── Tabs: segmented pills ── */
+QTabWidget {{ background: transparent; }}
+QTabBar {{ background: transparent; border: none; }}
 QTabWidget::pane {{
-    border: 1px solid {BORDER};
-    border-radius: 8px;
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 12px;
     background: {BG};
-    top: -1px;
+    top: 6px;
+    padding: 2px;
 }}
 QTabBar::tab {{
     background: transparent;
     color: {MUTED};
-    padding: 9px 22px;
-    border: 1px solid transparent;
-    border-bottom: 2px solid transparent;
-    margin-right: 2px;
+    font-weight: 600;
+    padding: 7px 18px;
+    border-radius: 8px;
+    margin: 2px 3px 8px 0;
 }}
 QTabBar::tab:selected {{
+    background: {ACCENT_LITE};
     color: {ACCENT};
-    font-weight: bold;
-    border-bottom: 2px solid {ACCENT};
 }}
 QTabBar::tab:hover:!selected {{
+    background: {HOVER};
     color: {TEXT};
-    border-bottom: 2px solid {BORDER};
 }}
 /* ── Tree ── */
 QTreeWidget {{
     background: {CARD};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
-    alternate-background-color: {CARD_ALT};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 12px;
+    alternate-background-color: transparent;
     outline: none;
+    padding: 6px;
 }}
 QTreeWidget::item {{
-    padding: 5px 2px;
-    border-radius: 4px;
+    padding: 6px 4px;
+    border-radius: 7px;
 }}
 QTreeWidget::item:selected {{
     background: {ACCENT_LITE};
@@ -100,50 +129,51 @@ QTreeWidget::item:selected {{
 QTreeWidget::item:hover:!selected {{
     background: {HOVER};
 }}
-/* ── Buttons ── */
+/* ── Buttons: THE gradient = primary action ── */
 QPushButton {{
-    background: {ACCENT};
+    background: {GRADIENT};
     color: #FFFFFF;
     border: none;
-    padding: 7px 16px;
-    border-radius: 7px;
+    padding: 8px 18px;
+    border-radius: 9px;
     font-weight: bold;
 }}
-QPushButton:hover   {{ background: {ACCENT_HOVER}; }}
-QPushButton:pressed {{ background: {ACCENT_ACTIVE}; }}
+QPushButton:hover   {{ background: {_GRADIENT_HOVER}; }}
+QPushButton:pressed {{ background: {_GRADIENT_DOWN}; }}
 QPushButton:disabled {{
-    background: {BORDER};
+    background: {CARD_ALT};
     color: {MUTED};
 }}
 /* ── Inputs ── */
 QLineEdit, QTextEdit, QComboBox, QDateEdit,
 QDoubleSpinBox, QSpinBox, QPlainTextEdit {{
-    background: {CARD};
-    border: 1px solid {BORDER};
-    border-radius: 7px;
-    padding: 6px 10px;
+    background: {INPUT_BG};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 9px;
+    padding: 7px 12px;
     color: {TEXT};
-    selection-background-color: {ACCENT};
+    selection-background-color: {GRAD_A};
     selection-color: #FFFFFF;
 }}
 QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QDateEdit:focus,
-QDoubleSpinBox:focus, QSpinBox:focus {{
+QDoubleSpinBox:focus, QSpinBox:focus, QPlainTextEdit:focus {{
     border: 1px solid {ACCENT};
     background: {CARD_ALT};
 }}
 QLineEdit:disabled, QComboBox:disabled, QDoubleSpinBox:disabled,
 QSpinBox:disabled, QDateEdit:disabled, QTextEdit:disabled {{
-    background: {BG};
+    background: transparent;
     color: {MUTED};
 }}
 QComboBox::drop-down {{
     border: none;
-    width: 24px;
+    width: 26px;
 }}
 QComboBox QAbstractItemView {{
     background: {CARD};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
+    border: 1px solid {BORDER_SOFT_HI};
+    border-radius: 9px;
+    padding: 4px;
     selection-background-color: {ACCENT_LITE};
     selection-color: {ACCENT};
     outline: none;
@@ -156,100 +186,106 @@ QDoubleSpinBox::down-button, QSpinBox::down-button, QDateEdit::down-button {{
 }}
 /* ── Group box ── */
 QGroupBox {{
-    border: 1px solid {BORDER};
-    border-radius: 8px;
-    margin-top: 14px;
-    padding-top: 6px;
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 12px;
+    margin-top: 16px;
+    padding-top: 8px;
     font-weight: bold;
     background: {CARD};
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 4px;
+    left: 12px;
+    padding: 0 5px;
     color: {ACCENT};
 }}
 /* ── Table ── */
 QHeaderView::section {{
-    background: {HEADER_BG};
-    color: {HEADER_FG};
-    padding: 7px 8px;
+    background: transparent;
+    color: {MUTED};
+    padding: 8px 10px;
     border: none;
+    border-bottom: 1px solid {BORDER_SOFT};
     font-weight: bold;
-    font-size: 9pt;
+    font-size: 8.5pt;
 }}
 QTableWidget {{
     background: {CARD};
     alternate-background-color: {CARD_ALT};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
-    gridline-color: {BORDER};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 12px;
+    gridline-color: transparent;
     color: {TEXT};
+    padding: 4px;
+}}
+QTableWidget::item {{
+    padding: 4px 6px;
+    border-radius: 5px;
 }}
 QTableWidget::item:selected {{
     background: {ACCENT_LITE};
     color: {TEXT};
 }}
-QTableCornerButton::section {{ background: {HEADER_BG}; border: none; }}
+QTableCornerButton::section {{ background: transparent; border: none; }}
 /* ── Menus ── */
 QMenuBar {{
     background: {HEADER_BG};
     color: {HEADER_FG};
-    padding: 2px;
-    border-bottom: 1px solid {BORDER};
+    padding: 3px;
+    border-bottom: 1px solid {BORDER_SOFT};
 }}
-QMenuBar::item {{ padding: 5px 12px; border-radius: 5px; }}
+QMenuBar::item {{ padding: 6px 13px; border-radius: 7px; }}
 QMenuBar::item:selected {{ background: {ACCENT_LITE}; color: {ACCENT}; }}
 QMenu {{
     background: {CARD};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
-    padding: 5px;
+    border: 1px solid {BORDER_SOFT_HI};
+    border-radius: 10px;
+    padding: 6px;
 }}
-QMenu::item {{ padding: 7px 22px; border-radius: 5px; }}
+QMenu::item {{ padding: 8px 26px; border-radius: 7px; }}
 QMenu::item:selected {{ background: {ACCENT_LITE}; color: {ACCENT}; }}
-QMenu::separator {{ height: 1px; background: {BORDER}; margin: 5px 6px; }}
+QMenu::separator {{ height: 1px; background: {BORDER_SOFT}; margin: 6px 8px; }}
 /* ── Scroll areas: kill the default white viewport ── */
 QScrollArea {{ border: none; background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
 QScrollArea QWidget#qt_scrollarea_viewport {{ background: transparent; }}
-/* ── Scrollbars ── */
+/* ── Scrollbars: slim, rounded, barely-there ── */
 QScrollBar:vertical {{
-    border: none; background: transparent; width: 9px; margin: 2px;
+    border: none; background: transparent; width: 8px; margin: 3px;
 }}
 QScrollBar::handle:vertical {{
-    background: {BORDER}; border-radius: 4px; min-height: 24px;
+    background: rgba(124,147,255,0.25); border-radius: 4px; min-height: 28px;
 }}
-QScrollBar::handle:vertical:hover {{ background: #33486B; }}
+QScrollBar::handle:vertical:hover {{ background: rgba(124,147,255,0.45); }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar:horizontal {{
-    border: none; background: transparent; height: 9px; margin: 2px;
+    border: none; background: transparent; height: 8px; margin: 3px;
 }}
 QScrollBar::handle:horizontal {{
-    background: {BORDER}; border-radius: 4px; min-width: 24px;
+    background: rgba(124,147,255,0.25); border-radius: 4px; min-width: 28px;
 }}
-QScrollBar::handle:horizontal:hover {{ background: #33486B; }}
+QScrollBar::handle:horizontal:hover {{ background: rgba(124,147,255,0.45); }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 /* ── Splitter ── */
-QSplitter::handle {{ background: {BORDER}; }}
-QSplitter::handle:horizontal {{ width: 1px; }}
+QSplitter::handle {{ background: transparent; }}
+QSplitter::handle:horizontal {{ width: 3px; }}
 /* ── Status bar ── */
 QStatusBar {{
     background: {HEADER_BG};
     color: {MUTED};
     font-size: 9pt;
-    border-top: 1px solid {BORDER};
+    border-top: 1px solid {BORDER_SOFT};
 }}
 /* ── Dialog button box ── */
-QDialogButtonBox QPushButton {{ min-width: 80px; }}
+QDialogButtonBox QPushButton {{ min-width: 92px; }}
 /* ── Tooltips ── */
 QToolTip {{
     background: {CARD_ALT};
     color: {TEXT};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
-    padding: 8px 12px;
+    border: 1px solid {BORDER_SOFT_HI};
+    border-radius: 8px;
+    padding: 9px 13px;
     font-size: 9pt;
     font-weight: normal;
 }}
@@ -257,61 +293,62 @@ QToolTip {{
 QToolBar {{
     background: {HEADER_BG};
     border: none;
-    border-bottom: 1px solid {BORDER};
-    padding: 5px 8px;
-    spacing: 4px;
+    border-bottom: 1px solid {BORDER_SOFT};
+    padding: 8px 10px;
+    spacing: 6px;
 }}
 QToolBar::separator {{
-    background: {BORDER};
+    background: {BORDER_SOFT};
     width: 1px;
-    margin: 6px 6px;
+    margin: 7px 7px;
 }}
 QToolButton {{
     background: transparent;
     color: {HEADER_FG};
     border: none;
-    border-radius: 7px;
-    padding: 6px 12px;
+    border-radius: 9px;
+    padding: 8px 14px;
     font-weight: 600;
-    font-size: 9pt;
+    font-size: 9.5pt;
 }}
 QToolButton:hover  {{ background: {ACCENT_LITE}; color: {ACCENT}; }}
 QToolButton:pressed {{ background: {HOVER}; color: {ACCENT}; }}
 /* ── Check boxes ── */
 QCheckBox {{
-    spacing: 7px;
+    spacing: 8px;
     padding: 2px 0;
     background: transparent;
 }}
 QCheckBox::indicator {{
-    width: 16px;
-    height: 16px;
-    border: 1px solid {BORDER};
-    border-radius: 4px;
-    background: {CARD};
+    width: 17px;
+    height: 17px;
+    border: 1px solid {BORDER_SOFT_HI};
+    border-radius: 5px;
+    background: {INPUT_BG};
 }}
 QCheckBox::indicator:hover   {{ border-color: {ACCENT}; }}
-QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+QCheckBox::indicator:checked {{ background: {GRADIENT}; border-color: {GRAD_A}; }}
 /* ── Radio buttons ── */
-QRadioButton {{ background: transparent; spacing: 7px; }}
+QRadioButton {{ background: transparent; spacing: 8px; }}
 QRadioButton::indicator {{
-    width: 15px; height: 15px;
-    border: 1px solid {BORDER};
+    width: 16px; height: 16px;
+    border: 1px solid {BORDER_SOFT_HI};
     border-radius: 8px;
-    background: {CARD};
+    background: {INPUT_BG};
 }}
-QRadioButton::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+QRadioButton::indicator:hover   {{ border-color: {ACCENT}; }}
+QRadioButton::indicator:checked {{ background: {GRADIENT}; border-color: {GRAD_A}; }}
 /* ── List widgets (quick jump etc.) ── */
 QListWidget {{
     background: {CARD};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 12px;
     outline: none;
-    padding: 4px;
+    padding: 5px;
 }}
 QListWidget::item {{
-    padding: 7px 10px;
-    border-radius: 6px;
+    padding: 8px 12px;
+    border-radius: 7px;
     color: {TEXT};
 }}
 QListWidget::item:hover    {{ background: {HOVER}; }}
@@ -322,7 +359,7 @@ QMessageBox {{ background: {CARD}; }}
 QCalendarWidget QWidget {{ background: {CARD}; }}
 QCalendarWidget QAbstractItemView {{
     background: {CARD};
-    selection-background-color: {ACCENT};
+    selection-background-color: {GRAD_A};
     selection-color: #FFFFFF;
 }}
 """

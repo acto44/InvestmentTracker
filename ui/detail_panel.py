@@ -16,13 +16,14 @@ import metrics as m
 from ui.styles import (
     GREEN, RED, ACCENT, MUTED, CARD, BORDER, TEXT, ACCENT_LITE,
     CARD_ALT, RED_SOFT, WARN_BG, WARN_BORDER, WARN_TEXT,
+    ACCENT_ACTIVE, BORDER_SOFT, GRAD_B,
     SOFT_BTN_BG, SOFT_BTN_BORDER, SOFT_BTN_TEXT, SOFT_BTN_HOVER,
 )
 
 _SOFT_BTN_QSS = (
     f"QPushButton {{ background:{SOFT_BTN_BG}; color:{SOFT_BTN_TEXT}; "
-    f"border:1px solid {SOFT_BTN_BORDER}; border-radius:6px; "
-    f"padding:4px 12px; font-size:9pt; }}"
+    f"border:1px solid {SOFT_BTN_BORDER}; border-radius:8px; "
+    f"padding:5px 14px; font-size:9pt; font-weight:600; }}"
     f"QPushButton:hover {{ background:{SOFT_BTN_HOVER}; }}"
 )
 
@@ -58,23 +59,25 @@ class MetricCard(QFrame):
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet(f"""
             QFrame {{
-                background: {CARD};
-                border: 1px solid {BORDER};
-                border-radius: 8px;
+                background: qlineargradient(x1:0, y1:0, x2:0.4, y2:1,
+                    stop:0 {CARD_ALT}, stop:1 {CARD});
+                border: 1px solid {BORDER_SOFT};
+                border-radius: 12px;
             }}
         """)
         if tooltip:
             self.setToolTip(tooltip)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(3)
+        layout.setContentsMargins(16, 13, 16, 13)
+        layout.setSpacing(4)
 
-        t = QLabel(title)
-        t.setStyleSheet(f"color:{MUTED}; font-size:9pt; border:none;")
+        t = QLabel(str(title).upper())
+        t.setStyleSheet(f"color:{MUTED}; font-size:8pt; font-weight:600; "
+                        f"border:none;")
         layout.addWidget(t)
 
         v = QLabel(str(value))
-        v.setStyleSheet(f"font-size:17pt; font-weight:bold; color:{color or TEXT}; border:none;")
+        v.setStyleSheet(f"font-size:18pt; font-weight:bold; color:{color or TEXT}; border:none;")
         layout.addWidget(v)
 
         if subtitle:
@@ -87,12 +90,12 @@ class MetricCard(QFrame):
 
 class SectionLabel(QLabel):
     def __init__(self, text, parent=None):
-        super().__init__(text, parent)
-        f = QFont(); f.setBold(True); f.setPointSize(10)
+        super().__init__(str(text).upper(), parent)
+        f = QFont(); f.setBold(True); f.setPointSize(9)
         self.setFont(f)
         self.setStyleSheet(
-            f"color:{ACCENT}; border-bottom:2px solid {BORDER}; "
-            f"padding-bottom:4px; margin-top:10px;"
+            f"color:{MUTED}; border-left:3px solid {ACCENT}; "
+            f"padding-left:9px; margin-top:12px;"
         )
 
 
@@ -129,6 +132,7 @@ class DetailPanel(QWidget):
             item = layout.takeAt(0)
             w = item.widget()
             if w:
+                w.setParent(None)   # vanish NOW, not on deferred delete
                 w.deleteLater()
             else:
                 sub = item.layout()
@@ -329,7 +333,7 @@ class DetailPanel(QWidget):
         if thesis:
             thesis_frame = QFrame()
             thesis_frame.setStyleSheet(
-                f"QFrame {{ background:{CARD}; border-left:3px solid #818CF8; "
+                f"QFrame {{ background:{CARD}; border-left:3px solid {GRAD_B}; "
                 f"border-radius:0px; padding:0px; }}"
             )
             thesis_lay = QVBoxLayout(thesis_frame)
@@ -453,7 +457,7 @@ class DetailPanel(QWidget):
         up_btn.setStyleSheet(
             f"QPushButton {{ background:{ACCENT}; color:white; border:none; "
             f"border-radius:4px; padding:2px 10px; font-size:8pt; }}"
-            f"QPushButton:hover {{ background:#2563EB; }}"
+            f"QPushButton:hover {{ background:{ACCENT_ACTIVE}; }}"
         )
         up_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         up_btn.clicked.connect(
