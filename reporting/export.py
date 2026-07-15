@@ -121,13 +121,35 @@ def generate_all_entity_reports(as_of=None, compare_to=None,
     return written
 
 
+def attach_ai_outputs(model: dict, company_id, include_ai) -> dict:
+    """Attach PERSISTED ai_outputs rows (session 8) to a company report
+    model. Reading rows is all this does — report export must NEVER
+    trigger AI generation (tested with a provider call counter)."""
+    import json
+
+    import models
+    keys = {'narrative': 'ai_narrative', 'risk_flags': 'ai_risk_flags'}
+    for task in include_ai or ():
+        row = models.get_ai_output(company_id, task)
+        if row:
+            model[keys[task]] = {
+                'provider': row['provider'],
+                'model': row['model'],
+                'created_at': row['created_at'],
+                'data': json.loads(row['response_json']),
+            }
+    return model
+
+
 def generate_company_report(company_id, as_of: date | None = None,
                             sections=None, formats=('html',),
-                            out_dir: str = '.') -> list:
+                            out_dir: str = '.', include_ai=()) -> list:
     """End-to-end: build → chart → render → write. Returns written paths.
-    This is what the UI calls; sessions 6/8 add siblings, not rework."""
+    This is what the UI calls; sessions 6/8 add siblings, not rework.
+    include_ai ⊆ ('narrative','risk_flags') renders the STORED outputs."""
     as_of = as_of or date.today()
     model = build_company_report_model(company_id, as_of)
+    attach_ai_outputs(model, company_id, include_ai)
     images = build_company_chart_images(model)
     html = render_report_html(model, images, sections)
     os.makedirs(out_dir, exist_ok=True)

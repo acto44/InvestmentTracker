@@ -59,7 +59,10 @@ ai/                      AI plumbing (session 7), NO features yet — rails
                          QThread → validate → ai_activity log; the ONE
                          pipeline features call), keystore.py (DPAPI
                          at-rest key encryption, obfuscation fallback
-                         with UI warning; key never in the DB)
+                         with UI warning; key never in the DB),
+                         context.py (session 8: whitelisted context
+                         packs from the report models — documents/paths
+                         never included — + in-memory Pseudonymizer)
 seed_demo_data.py        seed(verbose=True): fictional "ViFi" demo
                          portfolio (10 companies, 2 entities) — the ONLY
                          data allowed in fixtures/screenshots/the repo
@@ -79,6 +82,15 @@ ui/ai_settings.py        Settings → AI page: master switch (default OFF),
 ui/ai_card.py            AICard — THE labeling primitive: every AI-visible
                          thing renders inside it (provenance header +
                          "verify before decisions" footer)
+ui/ai_company.py         session 8: generate_for_company() — the ONE
+                         generation flow (model → pack → consent →
+                         validate → persist) shared by the Overview
+                         AI block (cards, regenerate/remove, typed
+                         errors + Retry) and the report dialog's
+                         generate-first offer
+ui/ai_qa.py              session 8: Ask-AI dialog (portfolio/company
+                         scope, per-question consent, session-only
+                         history — never persisted)
 ui/history_dialog.py     read-only audit-trail view (global + per company)
 ui/report_dialog.py      per-company report dialog (quick path from the
                          tree/detail panel); folder rules shared with the
@@ -171,33 +183,63 @@ pytest.ini               testpaths=tests — root-level scratch scripts
     (dashed line, marker, or "contains estimates" note)
 - **UI**: keep the dark design system in ui/styles.py and existing
   interaction patterns. Professional ≠ redesign.
-- **AI**: opt-in and consent are the product, not friction.
+- **AI SAFETY MODEL** (sessions 7–8): opt-in and consent are the
+  product, not friction.
   - `ai.is_ai_enabled()` is the SINGLE gate, default OFF; while off, no
-    AI affordance exists anywhere outside Settings → AI (tested).
+    AI affordance exists anywhere outside Settings → AI — no Overview
+    block, no Ask-AI action, no report checkboxes (all tested).
   - Every send goes through `ai.service.send_request` — nothing else may
     call a provider. It shows the consent dialog with the EXACT payload
     before anything leaves the machine; there is no "always allow".
+    Zero AI calls happen at app start, during report export, or in any
+    background path (call-counter tested).
+  - The AI sees ONLY report-model data: payloads are context packs
+    (ai/context.py) built from the session-5/6 report models by explicit
+    field picks — what the AI reads is exactly what a report shows.
+  - NEVER leaves the machine: the raw database; document contents AND
+    document names; file paths; API keys; real company/entity names
+    when pseudonymization is on (Settings → AI toggle, default off,
+    state always shown in the consent dialog; the alias mapping lives
+    in memory for one round-trip and is never persisted or sent).
   - The prompt (the data-bearing part) goes to the Claude CLI via STDIN,
     never argv; `system` is reserved for fixed instruction strings from
     ai/contract.py — user/database content never goes in `system`.
-  - Nothing renders un-validated: every reply passes
-    `contract.validate_response` (parse, type-check, clamp lengths/list
-    sizes, HTML-escape, drop unknown fields) and every AI-visible thing
-    renders inside `ui.ai_card.AICard` with provenance + disclaimer.
-  - ai_activity (v5) stores provider/model/task/payload SIZE/outcome —
-    never the payload or reply body, and never a key (scan-tested).
-    The OpenAI key lives DPAPI-encrypted in a user-profile file, never
-    in the database (backups must not carry credentials) and never in
-    logs or exception texts.
+  - Fixed contracts (ai/contract.py): 'ping', 'narrative' (sections +
+    caveats), 'risk_flags' (severity/title/rationale/based_on, empty
+    list valid), 'qa' (answer paragraphs + used_fields + follow-ups).
+    Nothing renders un-validated: every reply passes
+    `contract.validate_response` (parse, type-check, enum-check, clamp
+    lengths/list sizes, HTML-escape, drop unknown fields) and every
+    AI-visible thing renders inside `ui.ai_card.AICard` or a report
+    section with a provenance line. On validation failure the UI says
+    so with the structured reason and offers Retry — raw output is
+    never shown.
+  - Persisted vs session-only: narratives and risk flags live in
+    ai_outputs (v6, one CURRENT row per company+task, validated JSON
+    with provenance) so reports REUSE them — export never re-calls an
+    API, and if nothing is stored the report dialog offers to generate
+    first (full consent flow). Q&A is session-only: history dies with
+    the panel, the schema itself refuses task='qa', scan-tested.
+    ai_activity (v5) stores provider/model/task/payload SIZE/outcome —
+    never bodies, never keys (scan-tested). The OpenAI key lives
+    DPAPI-encrypted in a user-profile file, never in the database and
+    never in logs or exception texts.
   - The test suite is physically unable to reach a real API (autouse
     no_network fixture); providers are tested against fakes.
   - Manual checks each release (CI has no accounts) — last run
-    2026-07-15, both passed:
-    1. Settings → AI → Test connection via Claude CLI completes
-       end-to-end (consent → CLI → validated → AICard shows "pong").
-    2. With a deliberately wrong OpenAI key, Test connection shows the
-       typed auth error ("OpenAI rejected the API key (HTTP 401)…"),
-       not a stack trace, and no key text appears anywhere.
+    2026-07-15 on the owner's machine:
+    1. Settings → AI → Test connection via Claude CLI end-to-end
+       (consent → CLI → validated → AICard shows "pong"). PASSED.
+    2. Deliberately wrong OpenAI key → typed auth error ("OpenAI
+       rejected the API key (HTTP 401)…"), no stack trace, no key
+       echoed. PASSED.
+    3. Narrative + risk flags for a demo company via Claude CLI,
+       both included in an exported PDF with provider/model/date
+       provenance lines; export provably made zero AI calls. PASSED.
+    4. Portfolio Q&A question answered with figures grounded in the
+       payload and used_fields listed. PASSED (via Claude CLI;
+       the OpenAI leg awaits the owner's API key — the provider is
+       contract-tested and its 401 path was proven in check 2).
 - **PYINSTALLER RESOURCES**: any data file bundled into the .exe
   (templates, assets) must be resolved through a single resource_path()
   helper that handles sys._MEIPASS. Never open bundled files by relative
@@ -255,3 +297,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | 2026-07-14 | 5 | Company reports: reporting/ package (builder → render → export; named reporting/ because reports/ is the gitignored output dir), as-of-correct pure model with raw+fmt figures via new shared formatting.py, print-light offscreen charts (matplotlib Agg, 2×), QTextDocument-safe HTML (REPORT_STYLE_NOTES) with named image placeholders, portable single-file HTML (base64) + A4 PDF (QTextDocument resources + QPrinter), footnote appendix imports metrics.py strings, CONFIDENTIAL header/footer, AI-narrative anchor slot for session 8, ReportDialog (safe default folder in Documents, QSettings, repo-folder warning) reachable from toolbar/tree context menu/detail panel; filenames sanitized (Å/ö preserved) | none |
 | 2026-07-14 | 6 | Portfolio & entity reports + Report Center: _company_figures extracted so both builders share one math path (consistency portfolio == Σ company models enforced by test), build_portfolio_report_model(scope, as_of, compare_to) with pooled cash-flow IRR (FOOTNOTE_POOLED_IRR — not the average of company IRRs), NAV/sector/entity allocation (by NAV, FOOTNOTE_ALLOCATION), NAV-over-time chart, holdings + Realized positions tables, Movers (valuation changes/new investments/received) when compare_to set, aggregation notes ("N positions carried at net invested capital"); entity report = same pipeline scoped + Prepared-for header, zero forked paths; unknown scope → honest empty report (documented); donut + 3-series NAV chart helpers in charts.py; Report Center dialog (types, batch all-companies/all-entities with progress+cancel, QSettings) replaces the toolbar action — tree/detail quick dialog unchanged and on the same export functions | none |
 | 2026-07-15 | 7 | Safe AI plumbing, no user-visible features yet (rails for session 8): ai/ package — AIProvider protocol + typed errors, Claude via local Claude Code CLI (flags verified against 2.1.210: -p --output-format json --tools "" --no-session-persistence; prompt via STDIN never argv; neutral cwd; --bare avoided, kills OAuth; PATH + VS Code-extension discovery), OpenAI via urllib (no SDK — stdlib-first; default gpt-4.1-mini checked against docs 2026-07-15; max_completion_tokens; key scrubbed from every error), task-contract registry with validate_response (fence-strip, parse, type-check, clamp, HTML-escape, structured rejection), per-action ConsentDialog (exact payload, Cancel default, no "always allow"), service.send_request = the one pipeline (gate → consent → QThread with relay back to caller thread → validate → log), DPAPI keystore (per-user, obfuscation fallback + visible warning); Settings tabbed General/AI (master switch default OFF, live provider status, Test connection through the full real pipeline into an AICard); AICard labeling primitive; autouse no_network test ban; AI invariant + manual account checks recorded above (both passed on owner machine 2026-07-15). 45 new tests (147 total) | v5: ai_activity |
+| 2026-07-15 | 8 | The three AI capabilities on the session-7 rails: contract system gains enum choices + nested object_list validation; contracts 'narrative' (sections position_narrative/quarter_review + caveats), 'risk_flags' (severity/title/rationale/based_on, empty valid → "No flags raised."), 'qa' (answer/used_fields/follow-ups) with invent-nothing system prompts; ai/context.py whitelisted packs from the report models (documents and their NAMES excluded from every payload — tested against a company WITH documents; packs = the exact consent-preview bytes) + Pseudonymizer (Company A/Entity 1, in-memory mapping, restore on answers, state shown in consent; nothing alias-related persisted); v6 ai_outputs (one CURRENT validated output per company+task with provenance; qa refused by schema CHECK); generate_for_company() = one generation flow shared by the Overview AI block (AICards, regenerate/remove, typed errors + Retry) and the report dialog's generate-first offer; reports render ONLY persisted outputs as 'AI narrative'/'AI risk flags' sections with provenance lines (export provably zero AI calls, call-counter tested; boot too); Ask-AI toolbar action (exists only while enabled) → Q&A dialog with scope picker, per-question consent, session-only history (scan-tested absent from DB); severity chips on status-dot colors. Manual checklist 3–4 run on owner machine via real Claude CLI (PDF with labeled narrative+flags; grounded Q&A answer). 19 new tests (166 total) | v6: ai_outputs |

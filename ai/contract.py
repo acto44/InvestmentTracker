@@ -17,12 +17,15 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Field:
     name: str
-    type: str                    # 'str' | 'bool' | 'int' | 'float' | 'list'
+    type: str                    # 'str' | 'bool' | 'int' | 'float' |
+                                 # 'list' (of str) | 'object_list'
     required: bool = True
     max_len: int = 2000          # str fields (source chars, pre-escape)
     on_oversize: str = 'clamp'   # 'clamp' (truncate) | 'reject'
-    max_items: int = 20          # list fields (items are str)
-    item_max_len: int = 500
+    max_items: int = 20          # list/object_list fields
+    item_max_len: int = 500      # str items inside 'list'
+    choices: tuple | None = None       # str fields: allowed values only
+    item_fields: tuple | None = None   # object_list: schema per item
 
 
 @dataclass(frozen=True)
@@ -64,7 +67,92 @@ PING = Contract(
 PING_PROMPT = ('Connection test. Reply with exactly this JSON and '
                'nothing else: {"ok": true, "message": "pong"}')
 
-CONTRACTS = {c.task_id: c for c in (PING,)}
+# ── session-8 task contracts ─────────────────────────────────────────────────
+# The system strings are FIXED (never data). Each demands: use only what
+# is in the payload, invent nothing, say so when data is missing.
+
+_GROUND_RULES = (
+    'Ground rules: base every statement ONLY on the JSON payload you '
+    'receive — use no outside knowledge about any company or market. '
+    'Use only numbers that literally appear in the payload; never '
+    'invent or extrapolate figures, names, dates or events. Neutral, '
+    'professional investment-report tone. State uncertainty explicitly '
+    'and say when the data is too thin to conclude anything. Reply '
+    'with JSON only — no prose around it, no code fences.')
+
+NARRATIVE = Contract(
+    task_id='narrative',
+    purpose='Draft narrative report sections for this company from the '
+            'figures shown in the payload.',
+    system=(
+        'You draft narrative sections for a private family investment '
+        'report about one portfolio company. ' + _GROUND_RULES + ' '
+        'Output schema: {"sections": [{"id": "position_narrative" or '
+        '"quarter_review", "title": string (max 80 chars), '
+        '"paragraphs": [up to 4 strings, each max 600 chars]}], '
+        '"caveats": [up to 3 strings, each max 200 chars]}. Write '
+        '"position_narrative" (how the position stands today) and, '
+        'if the journal entries support it, "quarter_review" (recent '
+        'developments). Put every data limitation into "caveats".'),
+    fields=(
+        Field('sections', 'object_list', max_items=2, item_fields=(
+            Field('id', 'str',
+                  choices=('position_narrative', 'quarter_review')),
+            Field('title', 'str', max_len=80),
+            Field('paragraphs', 'list', max_items=4, item_max_len=600),
+        )),
+        Field('caveats', 'list', required=False, max_items=3,
+              item_max_len=200),
+    ),
+)
+
+RISK_FLAGS = Contract(
+    task_id='risk_flags',
+    purpose='Point out risk flags visible in this company\'s figures.',
+    system=(
+        'You review one portfolio company of a private family '
+        'investment portfolio for risk flags. ' + _GROUND_RULES + ' '
+        'Output schema: {"flags": [up to 8 of {"severity": "low" or '
+        '"medium" or "high", "title": string (max 80 chars), '
+        '"rationale": string (max 400 chars), "based_on": [names of '
+        'the payload fields the flag rests on]}]}. Only flag what the '
+        'payload itself supports (e.g. stale valuation dates, '
+        'concentration, estimate-based values, negative development). '
+        'An empty "flags" list is a perfectly good answer.'),
+    fields=(
+        Field('flags', 'object_list', max_items=8, item_fields=(
+            Field('severity', 'str', choices=('low', 'medium', 'high')),
+            Field('title', 'str', max_len=80),
+            Field('rationale', 'str', max_len=400),
+            Field('based_on', 'list', max_items=12, item_max_len=80),
+        )),
+    ),
+)
+
+QA = Contract(
+    task_id='qa',
+    purpose='Answer one question about the portfolio data shown in the '
+            'payload.',
+    system=(
+        'You answer questions about a private family investment '
+        'portfolio. The payload contains the portfolio data (exactly '
+        'what the owner\'s reports show), the conversation so far, and '
+        'the question. ' + _GROUND_RULES + ' '
+        'Output schema: {"answer_paragraphs": [up to 6 strings, each '
+        'max 700 chars], "used_fields": [names of payload fields the '
+        'answer rests on], "follow_up_suggestions": [up to 3 short '
+        'questions the owner might ask next]}.'),
+    fields=(
+        Field('answer_paragraphs', 'list', max_items=6,
+              item_max_len=700),
+        Field('used_fields', 'list', required=False, max_items=24,
+              item_max_len=80),
+        Field('follow_up_suggestions', 'list', required=False,
+              max_items=3, item_max_len=120),
+    ),
+)
+
+CONTRACTS = {c.task_id: c for c in (PING, NARRATIVE, RISK_FLAGS, QA)}
 
 
 def get_contract(task_id: str) -> Contract:
@@ -116,6 +204,12 @@ def _validate_value(value, f: Field):
             raise ContractViolation(
                 f.name, 'wrong-type',
                 f'expected str, got {type(value).__name__}')
+        if f.choices is not None:
+            if value not in f.choices:
+                raise ContractViolation(
+                    f.name, 'bad-choice',
+                    f'{value!r} not in {f.choices}')
+            return value                  # enum tokens are fixed and safe
         return _clamp_str(value, f, f.max_len)
     if f.type == 'list':
         if not isinstance(value, list):
@@ -135,6 +229,34 @@ def _validate_value(value, f: Field):
                     f.name, 'wrong-item-type',
                     f'list items must be str, got {type(item).__name__}')
             out.append(_clamp_str(item, f, f.item_max_len))
+        return out
+    if f.type == 'object_list':
+        if not isinstance(value, list):
+            raise ContractViolation(
+                f.name, 'wrong-type',
+                f'expected list, got {type(value).__name__}')
+        if len(value) > f.max_items:
+            if f.on_oversize == 'reject':
+                raise ContractViolation(
+                    f.name, 'oversize-list',
+                    f'{len(value)} items exceeds max {f.max_items}')
+            value = value[:f.max_items]
+        out = []
+        for i, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise ContractViolation(
+                    f.name, 'wrong-item-type',
+                    f'items must be objects, got {type(item).__name__}')
+            obj = {}
+            for sub in f.item_fields:
+                if sub.name not in item:
+                    if sub.required:
+                        raise ContractViolation(
+                            f'{f.name}[{i}].{sub.name}', 'missing',
+                            'required field absent')
+                    continue
+                obj[sub.name] = _validate_value(item[sub.name], sub)
+            out.append(obj)               # unknown item keys are dropped
         return out
     raise ContractViolation(f.name, 'bad-contract',
                             f'unknown field type {f.type!r}')

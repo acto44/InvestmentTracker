@@ -233,8 +233,30 @@ def _migrate_v5(conn):
     """)
 
 
+def _migrate_v6(conn):
+    """Persisted AI outputs (narratives, risk flags) with provenance —
+    so including them in a report NEVER re-calls an API. Q&A answers are
+    session-only and deliberately have no home here. response_json holds
+    the contract-VALIDATED (clamped, escaped) response, with real names
+    restored — never pseudonym mappings, never raw model output."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS ai_outputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+            task TEXT NOT NULL CHECK(task IN ('narrative','risk_flags')),
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            request_chars INTEGER NOT NULL,
+            response_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_outputs_company
+            ON ai_outputs(company_id, task);
+    """)
+
+
 MIGRATIONS = [(2, _migrate_v2), (3, _migrate_v3), (4, _migrate_v4),
-              (5, _migrate_v5)]
+              (5, _migrate_v5), (6, _migrate_v6)]
 SCHEMA_VERSION = max(v for v, _ in MIGRATIONS)
 
 
@@ -1183,6 +1205,40 @@ def get_ai_activity(limit=200):
         (int(limit),)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+def save_ai_output(company_id, task, provider, model, request_chars,
+                   response_json):
+    """One CURRENT output per (company, task): a new generation replaces
+    the previous one, so reports always show exactly one, reproducible
+    narrative/flag set. company_id None = portfolio-level."""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM ai_outputs WHERE company_id IS ? "
+                     "AND task=?", (company_id, task))
+        conn.execute(
+            "INSERT INTO ai_outputs (company_id, task, provider, model, "
+            "created_at, request_chars, response_json) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (company_id, task, provider, model or '', _utcnow(),
+             int(request_chars), response_json))
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_ai_output(company_id, task):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM ai_outputs WHERE company_id IS ? AND task=? "
+        "ORDER BY id DESC LIMIT 1", (company_id, task)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_ai_output(company_id, task):
+    conn = get_conn()
+    conn.execute("DELETE FROM ai_outputs WHERE company_id IS ? AND task=?",
+                 (company_id, task))
+    conn.commit()
+    conn.close()
 
 def backup_db(dest_path):
     shutil.copy2(get_db_path(), dest_path)

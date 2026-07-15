@@ -31,7 +31,8 @@ def compose_payload_preview(prompt: str, system: str | None) -> str:
 
 class ConsentDialog(QDialog):
     def __init__(self, parent, provider_name: str, model_label: str,
-                 destination: str, purpose: str, payload_text: str):
+                 destination: str, purpose: str, payload_text: str,
+                 note: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("Send to AI?")
         self.setMinimumWidth(560)
@@ -57,6 +58,15 @@ class ConsentDialog(QDialog):
         why = QLabel(f"Purpose: {purpose}")
         why.setWordWrap(True)
         layout.addWidget(why)
+
+        if note:
+            note_lbl = QLabel(note)
+            note_lbl.setWordWrap(True)
+            note_lbl.setStyleSheet(
+                f"background:{ACCENT_LITE}; color:{ACCENT};"
+                f"border:1px solid {BORDER}; border-radius:6px;"
+                f"padding:6px 10px; font-size:9pt;")
+            layout.addWidget(note_lbl)
 
         self._toggle = QToolButton()
         self._toggle.setText("Exact payload being sent "
@@ -111,8 +121,10 @@ class ConsentDialog(QDialog):
         return self._payload.toPlainText()
 
     @staticmethod
-    def ask(parent, provider, purpose: str, payload_text: str) -> bool:
+    def ask(parent, provider, purpose: str, payload_text: str,
+            note: str | None = None) -> bool:
         """True only if the user explicitly clicked Send."""
         dlg = ConsentDialog(parent, provider.name, provider.model_label,
-                            provider.destination, purpose, payload_text)
+                            provider.destination, purpose, payload_text,
+                            note=note)
         return dlg.exec() == QDialog.DialogCode.Accepted

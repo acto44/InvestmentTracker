@@ -102,7 +102,7 @@ def _log(provider, task_id, payload_chars, outcome):
 
 def send_request(request: AIRequest, provider=None, parent=None,
                  on_done=None, *, max_tokens=1000, timeout_s=120,
-                 use_thread=True, consent=None):
+                 use_thread=True, consent=None, consent_note=None):
     """Run the full pipeline for `request`. on_done(AIResult) fires when
     finished (synchronously when use_thread=False — the test path).
     `consent` overrides the dialog (tests); default is ConsentDialog.ask.
@@ -125,7 +125,8 @@ def send_request(request: AIRequest, provider=None, parent=None,
     payload_chars = len(request.prompt) + len(contract.system or '')
 
     ask = consent or (lambda: ConsentDialog.ask(
-        parent, provider, contract.purpose, preview))
+        parent, provider, contract.purpose, preview,
+        note=consent_note))
     if not ask():
         _log(provider, request.task_id, payload_chars, 'cancelled')
         result = AIResult('cancelled', provider.name,

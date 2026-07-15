@@ -16,11 +16,18 @@ import models
 AI_ENABLED_KEY = 'ai_enabled'
 AI_PROVIDER_KEY = 'ai_provider'
 AI_OPENAI_MODEL_KEY = 'ai_openai_model'
+AI_PSEUDONYMIZE_KEY = 'ai_pseudonymize'
 
 
 def is_ai_enabled() -> bool:
     """THE master-switch gate. Default OFF."""
     return models.get_setting(AI_ENABLED_KEY, '0') == '1'
+
+
+def is_pseudonymize_enabled() -> bool:
+    """Replace company/entity names with aliases in AI payloads.
+    Default OFF; state is always shown in the consent dialog."""
+    return models.get_setting(AI_PSEUDONYMIZE_KEY, '0') == '1'
 
 
 def set_ai_enabled(on: bool):

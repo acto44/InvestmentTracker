@@ -31,7 +31,8 @@ RED = '#B91C1C'
 BG_HEAD = '#F1F5F9'
 
 ALL_SECTIONS = ('position', 'valuations', 'rounds', 'ledger', 'ownership',
-                'thesis', 'documents', 'appendix')
+                'thesis', 'ai_narrative', 'documents', 'ai_risks',
+                'appendix')
 
 
 def esc(s) -> str:
@@ -204,6 +205,66 @@ def _section_thesis(m):
             + parts[0] + ai_anchor + ''.join(parts[1:]))
 
 
+_AMBER_PRINT = '#B45309'
+_SEV_COLORS = {'low': GREEN, 'medium': _AMBER_PRINT, 'high': RED}
+
+
+def _ai_provenance(a, label):
+    """The provenance line every AI report section carries. Export
+    attaches ONLY persisted ai_outputs rows — rendering never generates."""
+    ts = (a['created_at'] or '').replace('T', ' ')[:16]
+    return (f'<p style="color:{MUTED}; font-size:8pt;"><b>{esc(label)}'
+            f'</b> · {esc(a["provider"])} · {esc(a["model"])} · '
+            f'generated {esc(ts)} — AI output, verify before '
+            f'decisions.</p>')
+
+
+def _section_ai_narrative(m):
+    """Strings inside a['data'] were HTML-escaped by the AI contract at
+    validation time — they are inserted as-is, NEVER re-escaped (the
+    session-6 double-escape lesson)."""
+    a = m.get('ai_narrative')
+    if not a:
+        return ''
+    d = a['data']
+    parts = [_h2('ai_narrative', 'AI narrative'),
+             _ai_provenance(a, 'AI narrative')]
+    for s in d.get('sections', []):
+        parts.append(f'<h3 style="color:{INK}; font-size:11pt;">'
+                     f'{s["title"]}</h3>')
+        for p in s.get('paragraphs', []):
+            parts.append(f'<p style="font-size:9.5pt;">{p}</p>')
+    for cv in d.get('caveats', []):
+        parts.append(f'<p style="color:{MUTED}; font-size:8.5pt;">'
+                     f'Caveat: {cv}</p>')
+    return ''.join(parts)
+
+
+def _section_ai_risks(m):
+    a = m.get('ai_risk_flags')
+    if not a:
+        return ''
+    d = a['data']
+    parts = [_h2('ai_risks', 'AI risk flags'),
+             _ai_provenance(a, 'AI risk flags')]
+    flags = d.get('flags', [])
+    if not flags:
+        parts.append('<p style="font-size:9.5pt;">No flags raised.</p>')
+        return ''.join(parts)
+    rows = []
+    for f in flags:
+        color = _SEV_COLORS.get(f['severity'], MUTED)
+        rows.append([
+            f'<span style="color:{color};"><b>{f["severity"]}</b></span>',
+            f'<b>{f["title"]}</b>',
+            f['rationale'],
+            ', '.join(f.get('based_on', [])),
+        ])
+    parts.append(_table(['Severity', 'Flag', 'Rationale', 'Based on'],
+                        rows))
+    return ''.join(parts)
+
+
 def _section_documents(m):
     rows = m['documents']['rows']
     if not rows:
@@ -235,7 +296,9 @@ _SECTION_FUNCS = {
     'ledger': lambda m, imgs: _section_ledger(m),
     'ownership': lambda m, imgs: _section_ownership(m),
     'thesis': lambda m, imgs: _section_thesis(m),
+    'ai_narrative': lambda m, imgs: _section_ai_narrative(m),
     'documents': lambda m, imgs: _section_documents(m),
+    'ai_risks': lambda m, imgs: _section_ai_risks(m),
     'appendix': lambda m, imgs: _section_appendix(m),
 }
 

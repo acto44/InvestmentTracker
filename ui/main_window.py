@@ -105,6 +105,32 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         act("⚙ Settings", self._open_settings, None,
             "Currency and backup preferences")
+        self._toolbar = tb
+        self._ai_action = None
+        self._refresh_ai_affordances()
+
+    def _refresh_ai_affordances(self):
+        """The Ask-AI action EXISTS only while the master switch is on
+        (CLAUDE.md: AI) — created/removed here, re-checked after the
+        settings dialog closes."""
+        import ai
+        enabled = ai.is_ai_enabled()
+        if enabled and self._ai_action is None:
+            a = QAction("✦ Ask AI…", self)
+            a.triggered.connect(self._ask_ai)
+            a.setToolTip("Ask questions about the portfolio — "
+                         "per-question consent, session-only")
+            self._toolbar.addAction(a)
+            self._ai_action = a
+        elif not enabled and self._ai_action is not None:
+            self._toolbar.removeAction(self._ai_action)
+            self._ai_action.setParent(None)
+            self._ai_action.deleteLater()
+            self._ai_action = None
+
+    def _ask_ai(self):
+        from ui.ai_qa import AskAIDialog
+        AskAIDialog(self).exec()
 
     def _show_history(self):
         from ui.history_dialog import HistoryDialog
@@ -316,6 +342,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self):
         dlg = SettingsDialog(self)
         if dlg.exec():
+            self._refresh_ai_affordances()
             self._refresh_all()
 
     def _metrics_help(self):

@@ -40,6 +40,19 @@ class AISettingsPage(QWidget):
         master_note.setStyleSheet(f"color:{MUTED}; font-size:9pt;")
         layout.addWidget(master_note)
 
+        self.pseudo = QCheckBox(
+            "Pseudonymize payloads (send \"Company A\" / \"Entity 1\" "
+            "instead of real names)")
+        self.pseudo.setChecked(ai.is_pseudonymize_enabled())
+        layout.addWidget(self.pseudo)
+        pseudo_note = QLabel(
+            "The name mapping stays in memory on this machine only — "
+            "answers show real names again. The consent dialog always "
+            "states whether pseudonymization is on.")
+        pseudo_note.setWordWrap(True)
+        pseudo_note.setStyleSheet(f"color:{MUTED}; font-size:9pt;")
+        layout.addWidget(pseudo_note)
+
         prov_group = QGroupBox("Provider")
         pg = QVBoxLayout(prov_group)
         self.rb_claude = QRadioButton(
@@ -160,6 +173,8 @@ class AISettingsPage(QWidget):
 
     def apply(self):
         ai.set_ai_enabled(self.master.isChecked())
+        models.set_setting(ai.AI_PSEUDONYMIZE_KEY,
+                           '1' if self.pseudo.isChecked() else '0')
         models.set_setting(
             ai.AI_PROVIDER_KEY,
             'openai' if self.rb_openai.isChecked() else 'claude_cli')

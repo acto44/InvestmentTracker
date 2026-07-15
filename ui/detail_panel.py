@@ -385,6 +385,13 @@ class DetailPanel(QWidget):
             )
             ov.addWidget(nl)
 
+        # ── AI insights (session 8) — the widget only EXISTS when the
+        # master switch is on (CLAUDE.md: AI)
+        import ai as _ai
+        if _ai.is_ai_enabled():
+            from ui.ai_company import CompanyAIBlock
+            ov.addWidget(CompanyAIBlock(cid, c['name'], parent=self))
+
         # ── Rounds & Cash flows tab ───────────────────────────────────────────
         if rounds:
             rd.addWidget(SectionLabel("Funding Rounds"))

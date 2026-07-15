@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QDate, QSettings, QStandardPaths, QUrl
 from PyQt6.QtGui import QDesktopServices
 
+import ai
 import models
 from version import APP_NAME
 from ui.styles import MUTED
@@ -68,6 +69,18 @@ class ReportDialog(QDialog):
             self._section_boxes[key] = cb
             form.addRow("Sections" if key == 'position' else "", cb)
 
+        # AI sections (session 8): render the STORED output only — export
+        # never generates; an unticked/absent output simply isn't there.
+        self._ai_boxes = {}
+        if ai.is_ai_enabled():
+            for task, label in (
+                    ('narrative', 'Include AI narrative (stored)'),
+                    ('risk_flags', 'Include AI risk flags (stored)')):
+                cb = QCheckBox(label)
+                cb.setChecked(False)
+                self._ai_boxes[task] = cb
+                form.addRow("AI" if task == 'narrative' else "", cb)
+
         fmt_row = QHBoxLayout()
         self.rb_html = QRadioButton("HTML")
         self.rb_pdf = QRadioButton("PDF")
@@ -110,6 +123,46 @@ class ReportDialog(QDialog):
         if d:
             self.dir_edit.setText(d)
 
+    def _ensure_ai_output(self, task) -> bool:
+        """True → a stored output exists and may be included. If none is
+        stored, offer to generate FIRST (full consent flow) — the export
+        itself never calls the AI."""
+        from ui.ai_company import TASK_LABELS, generate_for_company
+        if models.get_ai_output(self._cid, task):
+            return True
+        label = TASK_LABELS[task]
+        if QMessageBox.question(
+                self, "Nothing stored yet",
+                f"No stored {label} exists for {self._company_name}.\n"
+                f"Generate one now? You will see exactly what would be "
+                f"sent before anything leaves this machine.\n\n"
+                f"(The report export itself never calls the AI — it only "
+                f"prints what is stored.)",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes:
+            return False
+        from PyQt6.QtCore import QEventLoop
+        loop = QEventLoop()
+        box = {}
+
+        def done(result):
+            box['r'] = result
+            loop.quit()
+
+        generate_for_company(self, self._cid, task, on_done=done)
+        if 'r' not in box:      # consent declined resolves synchronously
+            loop.exec()
+        r = box.get('r')
+        if r is not None and r.ok:
+            return True
+        if r is None or r.outcome == 'cancelled':
+            return False
+        QMessageBox.warning(self, "AI generation failed",
+                            r.error or "Unknown failure.")
+        return False
+
     def _create(self):
         out_dir = self.dir_edit.text().strip() or default_reports_dir()
         if _inside_app_or_repo(out_dir):
@@ -131,11 +184,19 @@ class ReportDialog(QDialog):
         qd = self.as_of_edit.date()
         as_of = date(qd.year(), qd.month(), qd.day())
 
+        include_ai = []
+        for task, cb in self._ai_boxes.items():
+            if cb.isChecked() and self._ensure_ai_output(task):
+                include_ai.append(task)
+        sections |= {'ai_narrative' if t == 'narrative' else 'ai_risks'
+                     for t in include_ai}
+
         from reporting.export import generate_company_report
         try:
             written = generate_company_report(
                 self._cid, as_of=as_of, sections=sections,
-                formats=formats, out_dir=out_dir)
+                formats=formats, out_dir=out_dir,
+                include_ai=tuple(include_ai))
         except Exception as e:
             QMessageBox.critical(self, "Report failed", str(e))
             return
