@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QFont
 import models
-from ui.styles import ACCENT, ACCENT_LITE, MUTED, CARD, BORDER, TEXT
+from ui.styles import ACCENT, ACCENT_LITE, MUTED, CARD, BORDER, TEXT, RED
 
 _INVEST_YEARS = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
 
@@ -919,6 +919,26 @@ class SettingsDialog(QDialog):
         bg.addWidget(b1)
         bg.addWidget(b2)
         gl.addWidget(backup_group)
+
+        danger = QGroupBox("Danger zone")
+        danger.setStyleSheet(
+            f"QGroupBox {{ border: 1px solid rgba(248,113,113,0.35); }}"
+            f"QGroupBox::title {{ color:{RED}; }}")
+        dg = QVBoxLayout(danger)
+        danger_note = QLabel(
+            "Deletes EVERY company with all rounds, cash flows, "
+            "valuations, journal entries and document records — e.g. to "
+            "clear demo data and start fresh. A backup is written first "
+            "and the change history is kept; files in the documents "
+            "folder are not touched.")
+        danger_note.setWordWrap(True)
+        danger_note.setStyleSheet(f"color:{MUTED}; font-size:9pt;")
+        dg.addWidget(danger_note)
+        b3 = QPushButton("Delete ALL companies…")
+        b3.setStyleSheet(f"background:{RED}; color:white;")
+        b3.clicked.connect(self._wipe_all)
+        dg.addWidget(b3)
+        gl.addWidget(danger)
         gl.addStretch()
         tabs.addTab(general, "General")
 
@@ -939,6 +959,47 @@ class SettingsDialog(QDialog):
         models.set_setting('currency_name', self.currency_name.text() or 'USD')
         self.ai_page.apply()
         self.accept()
+
+    def _wipe_all(self):
+        """Danger zone: warn with counts → typed DELETE confirmation →
+        automatic backup → audited wipe. Nothing happens on any other
+        path out of this method."""
+        from PyQt6.QtWidgets import QInputDialog
+
+        import backups
+        n = len(models.get_all_companies())
+        if n == 0:
+            QMessageBox.information(self, "Nothing to delete",
+                                    "There are no companies to delete.")
+            return
+        if QMessageBox.warning(
+                self, "Delete ALL companies?",
+                f"This deletes ALL {n} companies — every round, cash "
+                "flow, valuation, journal entry and document record.\n\n"
+                "A database backup is written first, and the change "
+                "history is kept. Files in the documents folder are NOT "
+                "deleted.\n\nContinue?",
+                QMessageBox.StandardButton.Yes |
+                QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        text, ok = QInputDialog.getText(
+            self, "Confirm deletion",
+            f"Really delete all {n} companies?\n"
+            "Type DELETE (in capital letters) to confirm:")
+        if not ok or text.strip() != 'DELETE':
+            QMessageBox.information(self, "Cancelled",
+                                    "Nothing was deleted.")
+            return
+        backup_path = backups.make_backup('pre-wipe')
+        deleted = models.wipe_all_companies(origin='ui.settings')
+        QMessageBox.information(
+            self, "All companies deleted",
+            f"{deleted} companies deleted.\n\nBackup written to:\n"
+            f"{backup_path}\n\nRestore it any time via Settings → "
+            "Restore database.")
+        self._save()   # closes the dialog; the main window refreshes
 
     def _backup(self):
         path, _ = QFileDialog.getSaveFileName(

@@ -647,6 +647,34 @@ def delete_company(company_id, origin='app'):
         raise
     conn.close()
 
+def wipe_all_companies(origin='app'):
+    """DANGER ZONE: deletes EVERY company — cascades take the rounds,
+    valuations, cashflows, document rows, journal entries and ai_outputs
+    with them. The audit trail deliberately SURVIVES (audit_log has no
+    FK) and records one delete entry per company plus a summary row, all
+    in the same transaction. Files in documents/ are not touched.
+    Callers must write a backup first (backups.make_backup('pre-wipe')).
+    Returns the number of companies deleted."""
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT id, name FROM companies").fetchall()
+        for r in rows:
+            _audit(conn, 'companies', r['id'], 'delete',
+                   [{'field': 'name', 'old': _trunc(r['name']),
+                     'new': None}],
+                   origin, company_id=r['id'])
+        conn.execute("DELETE FROM companies")
+        _audit(conn, 'companies', None, 'delete',
+               [{'field': 'wiped_companies', 'old': str(len(rows)),
+                 'new': '0'}], origin)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    conn.close()
+    return len(rows)
+
 # ── Rounds ───────────────────────────────────────────────────────────────────
 
 def get_rounds(company_id):

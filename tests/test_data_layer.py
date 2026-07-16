@@ -250,3 +250,39 @@ def test_backup_dir_override_via_settings(temp_db, tmp_path):
     models.set_setting('backup_dir', custom)
     made = backups.make_backup('routine')
     assert os.path.dirname(made) == custom
+
+
+# -- Danger zone: wipe all companies (session 12) ------------------------------
+
+def test_wipe_all_companies_is_total_audited_and_recoverable(demo_db):
+    assert len(models.get_all_companies()) == 10
+    backup_path = backups.make_backup('pre-wipe')
+    assert os.path.isfile(backup_path)
+
+    n = models.wipe_all_companies(origin='ui.settings')
+    assert n == 10
+    assert models.get_all_companies() == []
+    conn = models.get_conn()
+    for table in ('funding_rounds', 'valuations', 'cashflows',
+                  'company_updates', 'ai_outputs', 'documents'):
+        count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        assert count == 0, f'{table} not emptied by the cascade'
+    conn.close()
+
+    # the audit trail SURVIVES the wipe and records it: one delete entry
+    # per company plus the summary row, all origin ui.settings
+    log = models.get_audit_log(limit=1000)
+    deletes = [e for e in log
+               if e['action'] == 'delete' and e['origin'] == 'ui.settings']
+    assert len(deletes) == 11
+    summary = [e for e in deletes if e['row_id'] is None]
+    assert len(summary) == 1
+
+    # the pre-wipe backup is a complete, restorable copy
+    b = sqlite3.connect(backup_path)
+    assert b.execute("SELECT COUNT(*) FROM companies").fetchone()[0] == 10
+    b.close()
+
+
+def test_wipe_all_companies_on_empty_db(temp_db):
+    assert models.wipe_all_companies(origin='ui.settings') == 0
