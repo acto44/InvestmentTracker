@@ -64,6 +64,44 @@ If you only hold listed stocks and ETFs, a regular brokerage app will serve you 
 
 ---
 
+## Guided tour
+
+On first launch, a stork mascot flies in and walks new users through the app —
+it lands beside each key element, spotlights it, and explains it in plain language
+in a speech bubble. Eight stops, under a minute, fully keyboard-navigable
+(Enter/→ next, ← back, Esc exits), and it can be replayed anytime from the
+**?** menu. If Windows' animation setting is off, the stork fades between stops
+instead of flying. All figures below are fictional demo data.
+
+**Welcome — the stork flies in and offers the tour**
+![Tour welcome](screenshots/tour/tour_00_welcome.png)
+
+**Stop 1: Getting around — the sidebar navigation**
+![Tour navigation](screenshots/tour/tour_01_nav.png)
+
+**Stop 2: Portfolio value — the value-over-time chart and its metric tabs**
+![Tour chart](screenshots/tour/tour_02_chart.png)
+
+**Stop 3: The key numbers — invested, current value, gain and realized**
+![Tour key numbers](screenshots/tour/tour_03_kpi.png)
+
+**Stop 4: Biggest holdings — the Top 5 card**
+![Tour top holdings](screenshots/tour/tour_04_top5.png)
+
+**Stop 5: Activity & alerts — recent changes and stale-valuation warnings**
+![Tour activity and alerts](screenshots/tour/tour_05_rail.png)
+
+**Stop 6: Reports — PDF/web reports for a company, an owner, or the whole portfolio**
+![Tour reports](screenshots/tour/tour_06_reports.png)
+
+**Stop 7: Add a company — where a new investment starts**
+![Tour add company](screenshots/tour/tour_07_add.png)
+
+**Stop 8: AI assistant — optional and off by default; the stork points to where it lives**
+![Tour AI assistant](screenshots/tour/tour_08_ai.png)
+
+---
+
 ## Features
 
 **Portfolio overview**
