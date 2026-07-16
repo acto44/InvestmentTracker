@@ -16,7 +16,14 @@ from ui.tour import maybe_start_tour
 
 
 def _make_app_icon() -> QIcon:
-    """Draw the app icon in code: blue rounded square with a rising chart line."""
+    """The stork brand icon (ui/assets/app_icon.png, same art as app.ico).
+    Falls back to the original drawn chart-line icon if the asset is
+    missing so the app never boots icon-less."""
+    from resources import resource_path
+    pm = QPixmap(resource_path(os.path.join('ui', 'assets',
+                                            'app_icon.png')))
+    if not pm.isNull():
+        return QIcon(pm)
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 128, 256):
         pm = QPixmap(size, size)
@@ -82,6 +89,10 @@ def main():
             pass
 
     app = QApplication(sys.argv)
+    # Internal QSettings identity — NEVER rename these two: default-
+    # constructed QSettings() (report folder prefs) and the explicit
+    # ("FamilyInvestmentTracker", "InvestmentTracker") stores both hang
+    # off them. The user-visible name lives in version.APP_NAME.
     app.setApplicationName("Investment Tracker")
     app.setOrganizationName("FamilyInvestmentTracker")
     app.setWindowIcon(_make_app_icon())

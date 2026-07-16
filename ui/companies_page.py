@@ -52,7 +52,6 @@ class CompaniesPage(QWidget):
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.verticalHeader().setVisible(False)
         tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        tbl.setSortingEnabled(True)
         tbl.horizontalHeader().setStretchLastSection(True)
         tbl.setFrameShape(QFrame.Shape.NoFrame)
         right = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
@@ -106,6 +105,10 @@ class CompaniesPage(QWidget):
                 f"{moic:.2f}×" if moic is not None else "n/a",
                 numeric=True))
 
+        # sorting only AFTER the fill — enabling it first makes every
+        # setItem re-sort mid-fill and cells land in the wrong rows
+        tbl.setSortingEnabled(True)
+        tbl.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         tbl.resizeColumnsToContents()
         tbl.itemDoubleClicked.connect(self._open)
         self._tbl = tbl

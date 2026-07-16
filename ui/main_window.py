@@ -17,7 +17,8 @@ from ui.dialogs import MetricsHelpDialog, SettingsDialog
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Investment Tracker")
+        from version import APP_NAME
+        self.setWindowTitle(APP_NAME)
         self.setMinimumSize(1100, 700)
         self.resize(1500, 860)   # roomy enough for the right rail
         self._build_topbar()
@@ -315,8 +316,19 @@ class MainWindow(QMainWindow):
         logo.setObjectName("RailLogo")
         logo.setFixedSize(32, 32)
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        from PyQt6.QtGui import QPixmap
+        from resources import resource_path
+        import os as _os
+        _stork = QPixmap(resource_path(_os.path.join(
+            'ui', 'assets', 'stork', 'stork-right-up.png')))
+        if not _stork.isNull():
+            logo.setText("")
+            logo.setPixmap(_stork.scaled(
+                26, 26, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
         brand_row.addWidget(logo)
-        brand = QLabel("Investment Tracker")
+        from version import APP_NAME
+        brand = QLabel(APP_NAME)
         brand.setObjectName("RailBrand")
         brand_row.addWidget(brand, 1)
         lay.addLayout(brand_row)
@@ -532,9 +544,10 @@ class MainWindow(QMainWindow):
         MetricsHelpDialog(self).exec()
 
     def _about(self):
+        from version import APP_NAME, APP_VERSION
         QMessageBox.about(
-            self, "About Investment Tracker",
-            "Investment Tracker\n\n"
+            self, f"About {APP_NAME}",
+            f"{APP_NAME} {APP_VERSION}\n\n"
             "Track private company investments across funding rounds.\n"
             "Data stored locally in investments.db.\n\n"
             "Built with Python 3 · PyQt6 · SQLite · Matplotlib · openpyxl"

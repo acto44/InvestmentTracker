@@ -1087,7 +1087,6 @@ class DashboardTab(QWidget):
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.verticalHeader().setVisible(False)
         tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        tbl.setSortingEnabled(True)
         tbl.horizontalHeader().setStretchLastSection(True)
         tbl.setFrameShape(QFrame.Shape.NoFrame)
         for ci in range(4, len(headers)):     # numeric columns
@@ -1136,6 +1135,14 @@ class DashboardTab(QWidget):
             tbl.setItem(ri, 6, _item(gain_str, gain_col, numeric=True))
             tbl.setItem(ri, 7, _item(_moic(met.get('moic')), numeric=True))
 
+        # sorting only AFTER the fill (see companies_page.py). Clear the
+        # indicator first so enabling does NOT re-sort: rows are already
+        # in numerically-correct invested-desc order, and a Qt sort on
+        # the money strings would be lexical ("TKR 900" > "TKR 10,000").
+        hdr = tbl.horizontalHeader()
+        if hdr:
+            hdr.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        tbl.setSortingEnabled(True)
         tbl.resizeColumnsToContents()
         tbl.setMinimumHeight(320)
         return tbl

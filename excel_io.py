@@ -1,4 +1,4 @@
-"""Excel import and export for the Family Investment Tracker."""
+"""Excel import and export for Stork Investment."""
 
 import re
 import openpyxl

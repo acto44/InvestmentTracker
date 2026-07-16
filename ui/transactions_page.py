@@ -60,7 +60,6 @@ class TransactionsPage(QWidget):
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.verticalHeader().setVisible(False)
         tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        tbl.setSortingEnabled(True)
         tbl.horizontalHeader().setStretchLastSection(True)
         tbl.setFrameShape(QFrame.Shape.NoFrame)
         right = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
@@ -81,6 +80,9 @@ class TransactionsPage(QWidget):
             tbl.setItem(ri, 3, amt)
             tbl.setItem(ri, 4, QTableWidgetItem(f.get('note') or ''))
 
+        # sorting only AFTER the fill (see companies_page.py)
+        tbl.setSortingEnabled(True)
+        tbl.sortByColumn(0, Qt.SortOrder.DescendingOrder)   # newest first
         tbl.resizeColumnsToContents()
         self._tbl = tbl
         self._table_slot.addWidget(tbl)

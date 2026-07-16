@@ -1,14 +1,16 @@
-# Investment Tracker
+# Stork Investment
 
 A desktop app for tracking investments in **private companies across funding rounds** —
 built with PyQt6, SQLite and Matplotlib, for families and smaller investment groups who
 hold illiquid, multi-round positions that a normal brokerage app can't represent.
+The stork on the icon delivers the nest egg — and walks new users through the app.
 
 Most portfolio tools assume public, liquid stocks with a live price. This one is built
 for the opposite: a stake in a startup or fund bought across several rounds, where
 "what's it worth now?" depends on the latest valuation, your ownership %, and a bit of
 math (MOIC, IRR). The app keeps that history, does the math, and explains it in plain
-language. All data stays **local** — nothing is sent to any server.
+language. All data stays **local** — nothing leaves your machine unless you explicitly
+opt in to the AI assistant and approve each individual request.
 
 > **Trying it out?** This project ships with fictional demo data.
 > Run `python seed_demo_data.py` to populate the app with sample companies, then launch it.
@@ -20,12 +22,12 @@ language. All data stays **local** — nothing is sent to any server.
 
 A real, end-to-end desktop application covering:
 
-- **Financial modelling in code** — IRR via a numerical solver (Newton's method with a bisection fallback), plus MOIC, ROI, ownership and dilution math, with edge cases handled gracefully (single cash flow, all-positive flows, missing valuations → `n/a`).
-- **Desktop GUI engineering** — a multi-panel PyQt6 interface: tree navigation, a dashboard, detail views, modal dialogs, and embedded Matplotlib charts.
-- **Database design** — a normalised SQLite schema (`companies → rounds → documents`) with migrations, snapshots for change-tracking, and full CRUD.
-- **Real-world data import** — parsing a messy, human-made Excel spreadsheet into clean structured records.
-- **Privacy-by-design** — local-only storage, no network surface, and a `.gitignore` that keeps all real data out of version control.
-- **Packaging** — a standalone PyInstaller executable so non-technical users can run it with a double-click.
+- **Financial modelling in code** — date-true XIRR via a numerical solver (Newton's method with a bisection fallback), MOIC / DPI / RVPI / TVPI, ownership and dilution math, and portfolio time series **derived on demand** from dated valuations and cash flows (never stored snapshots that can go stale).
+- **Trustworthy data layer** — a versioned SQLite migration runner that backs the database up before every migration, an append-only audit trail written in the same transaction as every change, and a single cash-flow ledger every metric reads from.
+- **Desktop GUI engineering** — a sidebar-shell PyQt6 interface with a dashboard, read-only overview pages, tabbed company records, modal dialogs, embedded Matplotlib charts, and an animated first-run tour.
+- **Report generation** — an as-of-correct report model rendered to portable single-file HTML and A4 PDF, with batch export.
+- **Privacy-first AI integration** — an optional assistant that is off by default, shows the exact payload before anything is sent, validates every response against typed contracts, and never sees documents, file paths or API-key material.
+- **Packaging** — a one-file PyInstaller executable so non-technical family members can run it with a double-click.
 
 ---
 
@@ -41,32 +43,23 @@ If you only hold listed stocks and ETFs, a regular brokerage app will serve you 
 
 ## Screenshots
 
-**Dashboard — portfolio overview with key metrics, session delta and Portfolio Health**
+**Dashboard — portfolio value over time, key numbers, health checks, top holdings and a live activity rail**
 ![Dashboard overview](screenshots/01_dashboard.png)
 
-**Quick Jump (Ctrl+K) — type-ahead palette to jump straight to any company**
-![Quick jump](screenshots/02_quick_jump.png)
+**Company detail — position summary, valuation history with sources, and the position-value chart**
+![Company detail](screenshots/02_company_detail.png)
 
-**Portfolio Health panel — valuation coverage, concentration risk, stale-valuation warnings**
-![Portfolio health](screenshots/03_portfolio_health.png)
+**Companies — a flat, sortable view of every holding**
+![Companies page](screenshots/03_companies.png)
 
-**Charts — top holdings vs. current value, MOIC per company, and sector allocation**
-![Charts](screenshots/04_charts.png)
-
-**Top contributors, worst performers and searchable full holdings table**
-![Holdings table](screenshots/05_holdings_table.png)
-
-**Company detail — tabbed record (Overview / Rounds / Documents) with thesis and metrics (MOIC 3.69×, IRR 30.0%)**
-![Company detail](screenshots/06_company_detail.png)
-
-**Add company dialog — year-by-year investments, valuation and exit targets**
-![Add company](screenshots/07_add_company.png)
+**Transactions — the global cash-flow ledger, signed and color-coded**
+![Transactions page](screenshots/04_transactions.png)
 
 ---
 
 ## Guided tour
 
-On first launch, a stork mascot flies in and walks new users through the app —
+On first launch, the stork flies in and walks new users through the app —
 it lands beside each key element, spotlights it, and explains it in plain language
 in a speech bubble. Eight stops, under a minute, fully keyboard-navigable
 (Enter/→ next, ← back, Esc exits), and it can be replayed anytime from the
@@ -104,30 +97,47 @@ instead of flying. All figures below are fictional demo data.
 
 ## Features
 
-**Portfolio overview**
-- Dashboard with total invested, current value, MOIC, IRR and gain/loss at a glance
-- **Portfolio Health panel** — flags valuation coverage gaps, concentration risk, loss exposure, dependency on a few winners, and stale valuations
-- **Since last update** — automatically summarises what changed (valuation moves, new documents, MOIC shift) since your last session
+**Dashboard**
+- Portfolio-value chart with metric tabs (**Total Value / Gain-Loss / MOIC / IRR**) and 1M–ALL ranges, computed on demand from dated valuations and cash flows
+- KPI cards — invested, known current value, gain/loss, realized, MOIC/TVPI — with plain-language tooltips
+- **Portfolio Health** — valuation coverage, concentration risk, loss exposure and stale valuations as at-a-glance indicator bars
+- Extended **Top 5 holdings** (ownership %, MOIC, sparklines) and a sector allocation donut
+- Right rail: **Recent Activity** straight from the audit trail, one-click Quick Actions, and **Alerts** for valuations older than 12 months
+- "Since last update" delta — what changed since your last session
+
+**Navigation**
+- Fixed sidebar (Dashboard / Portfolio / Companies / Transactions / History / Reports / Compare) with a live change-count badge
+- Global search and a **Ctrl+K** type-ahead palette to jump to any company
+- Read-only **Companies** table and a global signed **Transactions** ledger
 
 **Per company**
-- **Tabbed company record** — Overview / Rounds / Documents, so long histories stay scannable
-- Metrics, funding-round history, a valuation-progression chart and current price per share
-- **Investment Thesis** note — capture *why* you invested, per company
-- **Type tags** (Startup, VC Fund, Private Equity, …) with dashboard filtering by type
-- **Document storage** — attach PDFs and agreements to a company or a specific round
-- **Status dots** in the portfolio tree — active / exited / bankrupt at a glance
+- Tabbed record — Overview, Rounds & Cash flows, Documents, Journal
+- **Valuation history** with dates, sources and notes — the current value is always the latest dated entry, never a hand-edited field
+- Position-value chart with money-in/money-out markers; estimated stretches are drawn dashed and labeled
+- Investment thesis, document attachments (per company or per round), and a dated journal
+- Full **cash-flow ledger** per company: investments, follow-ons, dividends, partial sales, exits — every metric reads from these flows
+
+**History & safety**
+- Append-only **audit trail** of every change (view it globally or per company); it deliberately survives even a full wipe
+- Automatic backups: before every schema migration (kept forever) and daily while you work (last 10 kept), plus one-file portable zip export of database + documents
+- Danger zone: delete-everything requires typing DELETE and writes its own backup first
+
+**Reports**
+- Company, portfolio and per-owner reports — portable single-file HTML or A4 PDF
+- Report Center with batch export (all companies / all owners) and progress
+- As-of-correct: reports take a date and reconstruct the portfolio as it was
+- Every metric footnoted with its assumptions
+
+**Optional AI assistant (off by default)**
+- Per-company **narratives** and structured **risk flags**, and a portfolio **Q&A** panel
+- Every request shows a consent dialog with the **exact payload** before anything is sent — there is no "always allow"
+- The AI sees only report-level figures: never documents, file names, paths or keys; an optional pseudonymization mode replaces company/owner names
+- Works with a local Claude Code CLI or an OpenAI API key (stored DPAPI-encrypted, never in the database)
+- Generated narratives are persisted with provenance and reused — exporting a report never silently calls an API
 
 **Data in and out**
-- **Excel import / export** — import from a structured spreadsheet; export back anytime
-- **Portable backup** — export the whole portfolio (database + documents) as one zip to share with family
-
-**Throughout**
-- **Dark "fintech" theme** — a token-based design system (`ui/styles.py`) applied across every panel, dialog and chart
-- **Quick Jump (Ctrl+K)** — type-ahead palette to open any company instantly
-- Toolbar + keyboard shortcuts (Ctrl+N add company, Ctrl+R refresh, Ctrl+, settings)
-- **Sector allocation donut** with CVD-safe, lightness-staggered slice colors
-- Window size, splitter position and active tab are remembered between sessions
-- Hover tooltips give plain-language explanations of every metric (MOIC, IRR, etc.)
+- **Excel import / export** — including a family-spreadsheet format with re-sync
+- Portable backup zip to move or share the whole portfolio
 
 ---
 
@@ -147,7 +157,7 @@ instead of flying. All figures below are fictional demo data.
 
 ### Prerequisites
 - **Python 3.11+**
-- Works on Windows, macOS and Linux
+- Developed and packaged on Windows; the UI itself is cross-platform Qt
 
 ### Install and run
 
@@ -157,7 +167,9 @@ python seed_demo_data.py     # optional: load fictional sample companies
 python main.py
 ```
 
-On first launch the app creates an empty `investments.db`. Add a company manually, load the demo data above, or use **File → Import** to load a spreadsheet (see *Excel import*).
+On first launch the app creates an empty `investments.db` next to itself, and the
+stork offers you the guided tour. Add a company manually, load the demo data above,
+or use **Import** in the top bar to load a spreadsheet.
 
 ### Build a standalone executable
 
@@ -165,21 +177,26 @@ For family members who don't have Python installed, build a double-click app:
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name "InvestmentTracker" main.py
+pyinstaller --onefile --windowed --icon app.ico --add-data "ui/assets;ui/assets" -n StorkInvestment main.py
 ```
 
-The executable appears in `dist/`. Build on the OS you're targeting — a Windows `.exe` must be built on Windows, a macOS app on macOS.
+The executable appears in `dist/`. The `--add-data` flag bundles the hero art, the
+app icon and the tour's stork sprites. Build on the OS you're targeting — a Windows
+`.exe` must be built on Windows.
 
 ---
 
 ## How the metrics work
 
-- **MOIC** (Multiple on Invested Capital) = current value ÷ total invested — e.g. `2.4×`
-- **ROI** = (current value − invested) ÷ invested, as a %
-- **IRR** = annualised return based on the *dates* of each investment and the current value, so timing matters (money in early and up a lot beats the same gain over a decade)
-- **Current value** = your ownership % × the company's latest entered valuation
+- **MOIC / TVPI** = (current value + realized proceeds) ÷ total invested — e.g. `2.4×`
+- **DPI** = realized proceeds ÷ invested (money actually returned); **RVPI** = remaining value ÷ invested
+- **IRR** = annualised return from the *dates* of every cash flow plus the current value as a terminal assumption, so timing matters (money in early and up a lot beats the same gain over a decade)
+- **Current value** = your ownership % × the company's latest dated valuation; ownership scales down after partial sales
+- Exited or bankrupt companies count only what was actually received — their unrealized value is zero by definition
+- Positions with no valuation yet are carried at net invested capital and clearly marked as estimates
 
-Valuations are entered manually — the app doesn't fetch live prices, because private companies don't have one. Keep valuations up to date for the metrics to stay meaningful; the Portfolio Health panel will warn you when they go stale.
+Valuations are entered manually — the app doesn't fetch live prices, because private
+companies don't have one. The Alerts rail warns you when valuations go stale.
 
 ---
 
@@ -192,32 +209,47 @@ The importer (`excel_io.py`) targets a **specific two-portfolio spreadsheet form
 ## Project structure
 
 ```
-InvestmentTracker/
-├── main.py              # Entry point
-├── models.py            # SQLite layer (CRUD, migrations, snapshots)
-├── metrics.py           # Financial calculations (MOIC, IRR, ROI)
+StorkInvestment/
+├── main.py              # Entry point: icon, styles, boot, first-run tour
+├── models.py            # SQLite layer: versioned migrations, audited CRUD
+├── metrics.py           # MOIC/DPI/RVPI/TVPI, date-true XIRR, derived NAV series
+├── backups.py           # Pre-migration + daily rotating backups
 ├── excel_io.py          # Excel import/export logic
+├── formatting.py        # Shared money/date display formatting
+├── resources.py         # PyInstaller-safe asset path resolution
+├── version.py           # App name + version (quoted in report headers)
 ├── seed_demo_data.py    # Loads fictional demo data
-├── requirements.txt
-└── ui/
-    ├── main_window.py        # Main window and menu bar
-    ├── dashboard.py          # Portfolio dashboard tab
-    ├── detail_panel.py       # Company / round / document detail panel
-    ├── tree_panel.py         # Left-hand portfolio tree
-    ├── dialogs.py            # Add/edit company and settings dialogs
-    ├── quick_jump.py         # Ctrl+K type-ahead company palette
-    ├── family_edit_dialog.py # Spreadsheet-style bulk edit dialog
-    ├── family_import_dialog.py
-    ├── import_dialog.py
-    ├── compare_dialog.py     # Side-by-side company comparison
-    └── styles.py             # Global stylesheet and colour palette
+├── reporting/           # Report pipeline: model → charts → HTML/PDF export
+├── ai/                  # Optional AI: providers, contracts, consent, keystore
+├── ui/                  # PyQt6 interface
+│   ├── main_window.py        # Sidebar shell, top bar, shortcuts
+│   ├── dashboard.py          # Dashboard tab (charts, KPIs, health, rail)
+│   ├── companies_page.py     # Read-only all-companies table
+│   ├── transactions_page.py  # Global signed cash-flow ledger
+│   ├── detail_panel.py       # Company record (Overview/Rounds/Documents/Journal)
+│   ├── tour.py               # First-run stork tour
+│   ├── report_center.py      # Batch report export
+│   ├── dialogs.py            # Add/edit dialogs, tabbed Settings
+│   └── ...                   # Tree panel, quick jump, AI panels, styles
+└── tests/               # pytest suite (temp databases only; network banned)
 ```
 
 ---
 
 ## Data & privacy
 
-All data is stored locally in `investments.db` (SQLite). Nothing leaves your machine. The database is excluded from this repository via `.gitignore` — to move or share your data, use **File → Export backup** to create a portable zip. This public repository contains only code and fictional demo data.
+All data is stored locally in `investments.db` (SQLite). The database, documents and
+backups are excluded from this repository via `.gitignore` — this public repo contains
+only code and fictional demo data.
+
+Nothing leaves your machine by default. The AI assistant is **opt-in and off until you
+enable it**; when on, every single request shows you the exact data that would be sent
+and waits for your approval. Documents, file names and paths are never included in any
+payload, API keys are stored encrypted with Windows DPAPI outside the database, and the
+app's own activity log records only sizes and outcomes — never content. Exported reports
+reuse previously generated AI text; exporting never triggers a network call.
+
+To move or share your data, use **Export → Export backup** to create a portable zip.
 
 ---
 
@@ -226,6 +258,7 @@ All data is stored locally in `investments.db` (SQLite). Nothing leaves your mac
 - **`ModuleNotFoundError` on launch** → run `pip install -r requirements.txt` again, ideally inside a virtual environment.
 - **Charts don't render** → confirm Matplotlib installed cleanly; on Linux you may also need a Qt platform plugin (`sudo apt install libxcb-cursor0`).
 - **Excel import puts data in the wrong place** → your spreadsheet layout differs from the expected format; adjust the parser in `excel_io.py`.
+- **Windows blocks the freshly built .exe** → unsigned new binaries trigger SmartScreen; choose "More info → Run anyway".
 
 ---
 

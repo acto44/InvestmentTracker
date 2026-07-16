@@ -5,8 +5,12 @@ this code — the invariants below are not style preferences.
 
 ## Project map
 ```
-main.py                  entry point: app icon (drawn in code), QSS, boot;
-                         when frozen, chdir to the exe's folder
+main.py                  entry point: stork app icon (ui/assets/
+                         app_icon.png, drawn-in-code fallback), QSS, boot,
+                         first-run tour mount; when frozen, chdir to the
+                         exe's folder. setApplicationName/-Organization
+                         are FROZEN QSettings identifiers — the visible
+                         name lives in version.APP_NAME only
 models.py                SQLite layer: schema, versioned migration runner
                          (MIGRATIONS list; auto pre-migration backup),
                          audited CRUD (audit_log written in the same
@@ -25,7 +29,12 @@ metrics.py               financial math: ROI, MOIC/DPI/RVPI/TVPI, date-true
 excel_io.py              Excel import/export (openpyxl)
 formatting.py            shared display formatters (MONEY invariant) +
                          sanitize_filename
-version.py               APP_NAME / APP_VERSION (quoted in report headers)
+version.py               APP_NAME ("Stork Investment", session 14 rename)
+                         / APP_VERSION — quoted in report headers, window
+                         title, sidebar brand. Display-only: QSettings
+                         org/app, keystore dir and AppUserModelID stay
+                         "FamilyInvestmentTracker"/"Investment Tracker"
+                         forever or saved settings orphan
 reporting/               report pipeline, three strict layers:
                          builder.py (pure as-of-correct model, raw+fmt),
                          charts.py (matplotlib Agg → PNG at 2×, print-light
@@ -292,9 +301,11 @@ pytest.ini               testpaths=tests — root-level scratch scripts
   resource_path() helper in resources.py (handles sys._MEIPASS) AND be
   listed in the spec's `datas`. Never open bundled files by relative
   path — when frozen, cwd is the exe's folder, not the bundle. Assets:
-  ui/assets/hero_art.png (session 12 hero illustration) and
-  ui/assets/stork/*.png (session 13 tour sprites) — the spec's
-  ('ui/assets', 'ui/assets') datas entry covers the whole tree.
+  ui/assets/hero_art.png (session 12 hero illustration),
+  ui/assets/stork/*.png (session 13 tour sprites) and
+  ui/assets/app_icon.png (session 14 stork icon, same art as app.ico) —
+  the spec's ('ui/assets', 'ui/assets') datas entry covers the whole
+  tree. The spec's exe name is StorkInvestment (session 14).
 
 ## How to run
 Bare `python` on this machine is a Windows Store stub — use the full path.
@@ -315,7 +326,7 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m pytest
 C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestmentTracker.spec
 #   (equivalent from scratch: pyinstaller --onefile --windowed
 #    --icon app.ico --add-data "ui/assets;ui/assets"
-#    -n FamilyInvestmentTracker main.py)
+#    -n StorkInvestment main.py)
 ```
 
 ## Definition of Done — every session
@@ -354,3 +365,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | 2026-07-15 | 11 | Target-mockup dashboard redesign (owner-supplied reference screenshot; presentational only — every figure identical, all features reachable), 6 phased commits d387f00/53f934b/b35a9c1/398a109/4c343d0/bb523dc: app shell (230px sidebar with icon nav + live History badge + portfolio dropdown footer, top bar with seeded global search + Import/Export menus absorbing the removed menu bar, shortcuts kept), Companies + Transactions read-only pages, target palette (blue #3B82F6 accent, CHART_ACCENT orange reserved for chart series), hero banner (QPainter art, no assets), portfolio-value chart card (derived series only; per-point XIRR for the IRR tab; hover crosshair) + summary card (YoY% from the same series, QPainter coverage ring), health indicator _Bars with semantic ambers, extended Top-5 (avatars/ownership/sparklines from real series/chevrons) + donut card, right rail (audit-log Recent Activity, Quick Actions, stale Alerts w/ badge) with sub-1280px vertical stacking; fit rule learned by measurement: text/figure metrics must not dictate layout minimums — Ignored h-policies + explicit floors, figures never clip (labels may elide); tests: conftest now isolates QSettings to a temp ini (test windows were writing real registry state — found when the owner's sidebar 'vanished'). 166 tests green throughout | none |
 | 2026-07-16 | 12 | Hero illustration + danger zone: owner-requested stork-with-moneybag hero art, redrawn twice on feedback (v2 single-silhouette bird + layered wing; v3 bills fanning from the bag opening + three tumbling out) — QPainter-rendered once to ui/assets/hero_art.png, the app's FIRST bundled asset, so the PYINSTALLER RESOURCES invariant got its real implementation: resources.py resource_path() (own module, not main.py — avoids circular imports; invariant text updated), spec datas + --add-data documented, asset verified inside the built exe via pyi-archive_viewer (Windows app control blocks Temp smoke-launches of fresh unsigned builds — owner must click through on first shortcut launch after each rebuild); _HeroArt renders nothing if the asset is missing. Danger zone (Settings → General): Delete ALL companies — warn with counts → typed DELETE → automatic backups.make_backup('pre-wipe') kept forever → models.wipe_all_companies (ONE transaction, per-company delete audit entries + summary row, cascades take rounds/valuations/cashflows/document rows/journal/ai_outputs, audit_log deliberately survives, documents/ files untouched); tested: total cascade, surviving audit trail, restorable backup, empty-db no-op. 168 tests | none |
 | 2026-07-16 | 13 | Stork guided tour (owner-supplied six-pose art): ui/tour.py — full-window veil + rounded spotlight, Bézier flights (QVariantAnimation) with 150ms wing-flap frames and mirrored poses for missing directions, flare landing, speech bubbles (pointer, Back/Next/dots, always-visible Skip), Esc/Enter/arrows; welcome offer + farewell flourish; 8 stops incl. Reports and an AI stop that follows the master switch; auto-start once ('tour_seen') from main.py post-show, replay via ? menu; reduced motion honors SPI_GETCLIENTAREAANIMATION (fade instead of flight); supplied PNGs were opaque white — border flood-fill transparency + 1254→400px downscale (7.6MB→214KB); spotlight CLIPPED to the scroll viewport for oversized targets (stacked rail punched through the top bar — caught in headless step-through grabs at 1500×860 + 1180×760, along with a KPI bubble overlap); scroll centers the target union; only dashboard change: KpiRow wrapper objectName. 5 new tests (173) | none |
+| 2026-07-16 | 14 | Stork identity + honest README: APP_NAME → "Stork Investment" (window title/sidebar brand/About/report headers; QSettings org+app, AppUserModelID and keystore dir deliberately FROZEN — default-ctor QSettings() in report dialogs hangs off setApplicationName), stork app icon (app.ico multi-size via Pillow + ui/assets/app_icon.png runtime asset w/ drawn fallback; sidebar logo pixmap), spec exe name → StorkInvestment (desktop shortcut re-pointed); README rewritten for the current app (session-11 shell, ledger metrics, reports, opt-in AI privacy section, tour) with 4 fresh 1680×900 native demo grabs replacing the 7 pre-redesign ones; retaking screenshots caught a REAL shipped bug: setSortingEnabled(True) BEFORE the fill loop in companies/transactions/holdings tables scrambles cells when a mid-fill re-sort fires (blank Companies rows) — sorting now enabled after fill w/ explicit default indicators (holdings keeps numeric insertion order, indicator cleared: money strings sort lexically) + regression test asserting every row of all three tables is fully populated. 174 tests. GitHub: repo published by owner as acto44/InvestmentTracker; tour guide + screenshots pushed | none |
