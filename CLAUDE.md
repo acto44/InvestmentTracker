@@ -278,10 +278,11 @@ pytest.ini               testpaths=tests — root-level scratch scripts
        the OpenAI leg awaits the owner's API key — the provider is
        contract-tested and its 401 path was proven in check 2).
 - **PYINSTALLER RESOURCES**: any data file bundled into the .exe
-  (templates, assets) must be resolved through a single resource_path()
-  helper that handles sys._MEIPASS. Never open bundled files by relative
-  path. (No bundled data files exist yet — create the helper together
-  with the first one, in main.py.)
+  (templates, assets) must be resolved through the single
+  resource_path() helper in resources.py (handles sys._MEIPASS) AND be
+  listed in the spec's `datas`. Never open bundled files by relative
+  path — when frozen, cwd is the exe's folder, not the bundle. First
+  asset: ui/assets/hero_art.png (session 12 hero illustration).
 
 ## How to run
 Bare `python` on this machine is a Windows Store stub — use the full path.
@@ -301,7 +302,8 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m pytest
 # build the one-file .exe (spec file is local, gitignored)
 C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestmentTracker.spec
 #   (equivalent from scratch: pyinstaller --onefile --windowed
-#    --icon app.ico -n FamilyInvestmentTracker main.py)
+#    --icon app.ico --add-data "ui/assets;ui/assets"
+#    -n FamilyInvestmentTracker main.py)
 ```
 
 ## Definition of Done — every session

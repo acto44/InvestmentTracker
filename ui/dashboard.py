@@ -3,6 +3,8 @@ from PyQt6.QtWidgets import (
     QScrollArea, QTableWidget, QTableWidgetItem, QSizePolicy,
     QGridLayout, QPushButton, QLineEdit
 )
+import os
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 
@@ -37,35 +39,30 @@ except Exception:
 
 
 class _HeroArt(QWidget):
-    """Decorative right side of the hero banner — painted shapes only
-    (target mockup shows an abstract dial + beams), no image assets."""
+    """Right side of the hero banner: the stork-with-moneybag
+    illustration (ui/assets/hero_art.png, transparent background,
+    loaded through resource_path so the .exe finds it too). Renders
+    nothing if the asset is missing — the banner must never crash."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PyQt6.QtGui import QPixmap
+
+        from resources import resource_path
+        self._pm = QPixmap(resource_path(
+            os.path.join('ui', 'assets', 'hero_art.png')))
 
     def paintEvent(self, event):
-        from PyQt6.QtCore import QPointF
-        from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
+        from PyQt6.QtGui import QPainter
+        if self._pm.isNull():
+            return
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        # diagonal beams sweeping in from the right
-        p.setPen(Qt.PenStyle.NoPen)
-        for i, alpha in ((0, 16), (1, 10), (2, 6)):
-            x = w - 40 - i * 85
-            p.setBrush(QColor(255, 255, 255, alpha))
-            p.drawPolygon(QPolygonF([
-                QPointF(x, h), QPointF(x + 46, h),
-                QPointF(x + 120, -10), QPointF(x + 74, -10)]))
-        # big soft dial
-        cx, cy, r = w - 170, h * 0.55, 74
-        p.setBrush(QColor(148, 163, 184, 46))
-        p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
-        pen = QPen(QColor(230, 234, 243, 60))
-        pen.setWidthF(1.2)
-        p.setPen(pen)
-        p.drawLine(int(cx - r), int(cy), int(cx + r), int(cy))
-        p.drawLine(int(cx), int(cy - r), int(cx), int(cy + r))
-        p.setBrush(QColor(249, 115, 22, 200))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(int(cx - 3), int(cy - 3), 6, 6)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        h = self.height() - 8
+        pm = self._pm.scaledToHeight(
+            h, Qt.TransformationMode.SmoothTransformation)
+        p.drawPixmap(self.width() - pm.width() - 8,
+                     (self.height() - pm.height()) // 2, pm)
         p.end()
 
 
