@@ -640,9 +640,8 @@ class TourOverlay(QWidget):
 
         def done():
             self._flap.stop()
-            if then and not self._closing:
-                then()
-            elif then and self._closing and then == self._close:
+            # after finish() only the farewell flyaway may still land
+            if then and (not self._closing or then == self._close):
                 then()
 
         anim.finished.connect(done)
