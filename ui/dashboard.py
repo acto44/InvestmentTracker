@@ -507,7 +507,10 @@ class DashboardTab(QWidget):
         sign       = "+" if total_gain_known >= 0 else "−"
         gain_str   = f"{sign}{sym} {abs(total_gain_known):,.0f}"
 
-        cards = QHBoxLayout()
+        kpi_row = QWidget()
+        kpi_row.setObjectName("KpiRow")   # tour anchor (ui/tour.py)
+        cards = QHBoxLayout(kpi_row)
+        cards.setContentsMargins(0, 0, 0, 0)
         cards.setSpacing(12)
 
         def kpi(*a, **k):        # six cards beside the rail: tighter fit
@@ -539,7 +542,7 @@ class DashboardTab(QWidget):
             tooltip="Capital invested in companies where no current valuation has been set.\n"
                     "These are not counted in MOIC or Gain/Loss — "
                     "the true portfolio performance may be higher or lower."))
-        self._layout.addLayout(cards)
+        self._layout.addWidget(kpi_row)
 
         # ── Portfolio Health ──────────────────────────────────────────────────
         self._layout.addWidget(

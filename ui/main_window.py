@@ -82,8 +82,9 @@ class MainWindow(QMainWindow):
             tb.addWidget(b)
             return b
 
-        top_btn("＋  Add Company", self._quick_add_company, primary=True,
-                tip="Add a new company to the portfolio  (Ctrl+N)")
+        self._add_btn = top_btn(
+            "＋  Add Company", self._quick_add_company, primary=True,
+            tip="Add a new company to the portfolio  (Ctrl+N)")
 
         imp = QMenu(self)
         imp.addAction("Import from family spreadsheet…",
@@ -110,6 +111,7 @@ class MainWindow(QMainWindow):
                 tip="Reload all data  (Ctrl+R)")
 
         help_m = QMenu(self)
+        help_m.addAction("Show me around (tour)", self._start_tour)
         help_m.addAction("How metrics are calculated…", self._metrics_help)
         help_m.addAction("About", self._about)
         top_btn(" ? ", menu=help_m, tip="Help")
@@ -349,11 +351,11 @@ class MainWindow(QMainWindow):
         hb.addWidget(badge)
         self._history_badge = badge
 
-        rail_btn("📄  Reports", self._report_center)
+        self._reports_btn = rail_btn("📄  Reports", self._report_center)
         rail_btn("⇄  Compare", self._compare_companies)
         self._rail_ai_index = lay.count()   # Ask AI slot (when enabled)
         lay.addStretch()
-        rail_btn("⚙  Settings", self._open_settings)
+        self._settings_btn = rail_btn("⚙  Settings", self._open_settings)
 
         lay.addSpacing(8)
         self._portfolio_combo = QComboBox()
@@ -521,6 +523,10 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self._refresh_ai_affordances()
             self._refresh_all()
+
+    def _start_tour(self):
+        from ui.tour import start_tour
+        start_tour(self)
 
     def _metrics_help(self):
         MetricsHelpDialog(self).exec()

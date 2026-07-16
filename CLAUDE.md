@@ -128,6 +128,16 @@ ui/ai_company.py         session 8: generate_for_company() — the ONE
 ui/ai_qa.py              session 8: Ask-AI dialog (portfolio/company
                          scope, per-question consent, session-only
                          history — never persisted)
+ui/tour.py               first-run guided tour (session 13): stork mascot
+                         flies between 8 stops (spotlight overlay + speech
+                         bubbles); TOUR_STEPS = plain config with LAZY
+                         resolvers (the dashboard rebuilds on refresh, so
+                         widgets are re-found per stop; missing target →
+                         stop skipped); auto-starts once via QSettings
+                         'tour_seen', mounted from main.py AFTER show so
+                         tests never trigger it; replay in the ? menu; the
+                         AI stop honors the master switch (points at
+                         Settings while off); sprites in ui/assets/stork/
 ui/history_dialog.py     read-only audit-trail view (global + per company)
 ui/report_dialog.py      per-company report dialog (quick path from the
                          tree/detail panel); folder rules shared with the
@@ -281,8 +291,10 @@ pytest.ini               testpaths=tests — root-level scratch scripts
   (templates, assets) must be resolved through the single
   resource_path() helper in resources.py (handles sys._MEIPASS) AND be
   listed in the spec's `datas`. Never open bundled files by relative
-  path — when frozen, cwd is the exe's folder, not the bundle. First
-  asset: ui/assets/hero_art.png (session 12 hero illustration).
+  path — when frozen, cwd is the exe's folder, not the bundle. Assets:
+  ui/assets/hero_art.png (session 12 hero illustration) and
+  ui/assets/stork/*.png (session 13 tour sprites) — the spec's
+  ('ui/assets', 'ui/assets') datas entry covers the whole tree.
 
 ## How to run
 Bare `python` on this machine is a Windows Store stub — use the full path.
@@ -341,3 +353,4 @@ C:\Users\joelg\AppData\Local\Python\bin\python.exe -m PyInstaller FamilyInvestme
 | 2026-07-15 | 10 | Restrained-fintech token pass (owner-requested, pure visual, zero behavior): design tokens codified in ui/styles.py header (4/8px spacing, CARD_PAD 20, four flat surfaces, ONE accent #6C7FF2 — session-9 gradient retired to compat aliases, semantic-only green/red/amber, one hairline border, RADIUS 10/6, Inter→Segoe fallback, label_font() for letter-spacing since QSS can't); flat bg (gradient removed); KPI cards get identical label/value/subtext structure + equal min-heights, decorative colors pruned (Known Current Value, Realized → neutral; green/red only on gain/loss); one _pill_style for every toggle row (portfolio/type/chart-range); _MiniTable numerics right-aligned + sized to exactly header+rows (kills the stray strip below the last row); full holdings table numeric columns + headers right-aligned, item hover added in QSS; section headers unified to ONE 8pt uppercase letter-spaced muted style across dashboard/detail/dialogs (accent bars removed); detail _fmt gains the thousands space (TKR 900, matching dashboard + reports); lesson recorded: app-QSS font-size overrides QFont — sizes live in stylesheets, QFont only for letter-spacing | none |
 | 2026-07-15 | 11 | Target-mockup dashboard redesign (owner-supplied reference screenshot; presentational only — every figure identical, all features reachable), 6 phased commits d387f00/53f934b/b35a9c1/398a109/4c343d0/bb523dc: app shell (230px sidebar with icon nav + live History badge + portfolio dropdown footer, top bar with seeded global search + Import/Export menus absorbing the removed menu bar, shortcuts kept), Companies + Transactions read-only pages, target palette (blue #3B82F6 accent, CHART_ACCENT orange reserved for chart series), hero banner (QPainter art, no assets), portfolio-value chart card (derived series only; per-point XIRR for the IRR tab; hover crosshair) + summary card (YoY% from the same series, QPainter coverage ring), health indicator _Bars with semantic ambers, extended Top-5 (avatars/ownership/sparklines from real series/chevrons) + donut card, right rail (audit-log Recent Activity, Quick Actions, stale Alerts w/ badge) with sub-1280px vertical stacking; fit rule learned by measurement: text/figure metrics must not dictate layout minimums — Ignored h-policies + explicit floors, figures never clip (labels may elide); tests: conftest now isolates QSettings to a temp ini (test windows were writing real registry state — found when the owner's sidebar 'vanished'). 166 tests green throughout | none |
 | 2026-07-16 | 12 | Hero illustration + danger zone: owner-requested stork-with-moneybag hero art, redrawn twice on feedback (v2 single-silhouette bird + layered wing; v3 bills fanning from the bag opening + three tumbling out) — QPainter-rendered once to ui/assets/hero_art.png, the app's FIRST bundled asset, so the PYINSTALLER RESOURCES invariant got its real implementation: resources.py resource_path() (own module, not main.py — avoids circular imports; invariant text updated), spec datas + --add-data documented, asset verified inside the built exe via pyi-archive_viewer (Windows app control blocks Temp smoke-launches of fresh unsigned builds — owner must click through on first shortcut launch after each rebuild); _HeroArt renders nothing if the asset is missing. Danger zone (Settings → General): Delete ALL companies — warn with counts → typed DELETE → automatic backups.make_backup('pre-wipe') kept forever → models.wipe_all_companies (ONE transaction, per-company delete audit entries + summary row, cascades take rounds/valuations/cashflows/document rows/journal/ai_outputs, audit_log deliberately survives, documents/ files untouched); tested: total cascade, surviving audit trail, restorable backup, empty-db no-op. 168 tests | none |
+| 2026-07-16 | 13 | Stork guided tour (owner-supplied six-pose art): ui/tour.py — full-window veil + rounded spotlight, Bézier flights (QVariantAnimation) with 150ms wing-flap frames and mirrored poses for missing directions, flare landing, speech bubbles (pointer, Back/Next/dots, always-visible Skip), Esc/Enter/arrows; welcome offer + farewell flourish; 8 stops incl. Reports and an AI stop that follows the master switch; auto-start once ('tour_seen') from main.py post-show, replay via ? menu; reduced motion honors SPI_GETCLIENTAREAANIMATION (fade instead of flight); supplied PNGs were opaque white — border flood-fill transparency + 1254→400px downscale (7.6MB→214KB); spotlight CLIPPED to the scroll viewport for oversized targets (stacked rail punched through the top bar — caught in headless step-through grabs at 1500×860 + 1180×760, along with a KPI bubble overlap); scroll centers the target union; only dashboard change: KpiRow wrapper objectName. 5 new tests (173) | none |

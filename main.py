@@ -7,11 +7,12 @@ if getattr(sys, 'frozen', False):
     os.chdir(os.path.dirname(sys.executable))
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt, QPointF, QRectF
+from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QPolygonF
 import models
 from ui.main_window import MainWindow
 from ui.styles import QSS
+from ui.tour import maybe_start_tour
 
 
 def _make_app_icon() -> QIcon:
@@ -88,6 +89,8 @@ def main():
 
     window = MainWindow()
     window.show()
+    # First-run guided tour — after the window has painted, once ever
+    QTimer.singleShot(500, lambda: maybe_start_tour(window))
     sys.exit(app.exec())
 
 
